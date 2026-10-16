@@ -26,7 +26,7 @@ nav{position:fixed;top:66px;bottom:0;left:0;width:88px;display:flex;flex-directi
 .tw{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border-bottom:1px solid var(--bd);padding:5px 6px;text-align:left;white-space:nowrap}
 .hd{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--card);border-bottom:1px solid var(--bd)}
 .chip{display:inline-block;background:var(--bg);border:1px solid var(--bd);border-radius:12px;padding:2px 8px;margin:2px;font-size:12px}.chip a{color:var(--er);cursor:pointer;padding:0 3px}
-button,input,select{touch-action:manipulation}button:active{transform:scale(.97);filter:brightness(.88)}
+.suggest-wrap{position:relative}.suggest-list{position:absolute;left:0;right:0;top:100%;z-index:15;max-height:220px;overflow-y:auto;background:var(--card);border:1px solid var(--bd);border-radius:8px;box-shadow:0 5px 14px rgba(0,0,0,.16)}.suggest-item{padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--bd);font-size:15px}.suggest-item:hover{background:var(--bd)}button,input,select{touch-action:manipulation}button:active{transform:scale(.97);filter:brightness(.88)}
 #bar{position:fixed;top:0;left:0;height:3px;width:100%;background:linear-gradient(90deg,transparent,var(--ac),transparent);animation:bm 1s linear infinite;display:none;z-index:30}@keyframes bm{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
 #toast{position:fixed;top:60px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:8px 14px;border-radius:8px;z-index:20;display:none}
 </style></head><body>
@@ -119,14 +119,18 @@ function home(){const T=[['scan','Dispatch','📤'],['ret','Return','↩️'],['
  preload();
  ({scan:()=>scanV('F'),ret:()=>scanV('R'),mf,dash,rep,adm})[tab]()}
 const opts=a=>'<option value="">-- select --</option>'+a.map(x=>`<option>${esc(x)}</option>`).join('');
+function suggestField(id,label){return `<label>${label}</label><div class="suggest-wrap"><input id="${id}" autocomplete="off" autocapitalize="off" placeholder="Type at least 1 character to search"><div class="suggest-list" id="${id}_list" hidden></div></div>`}
+function wireSuggest(id,items){const el=$('#'+id),list=$('#'+id+'_list');if(!el||!list)return;const draw=()=>{const q=el.value.trim().toLocaleLowerCase();if(q.length<1){list.hidden=true;list.innerHTML='';return}const m=items.filter(x=>String(x).toLocaleLowerCase().includes(q)).slice(0,50);list.innerHTML=m.length?m.map(x=>`<div class="suggest-item" data-value="${esc(x)}">${esc(x)}</div>`).join(''):'<div class="suggest-item mu">No matching names found</div>';list.hidden=false};el.addEventListener('input',draw);el.addEventListener('focus',draw);list.addEventListener('mousedown',e=>{const x=e.target.closest('[data-value]');if(!x)return;e.preventDefault();el.value=x.dataset.value;list.hidden=true});el.addEventListener('keydown',e=>{if(e.key==='Escape')list.hidden=true});document.addEventListener('click',e=>{if(!e.target.closest('.suggest-wrap'))list.hidden=true})}
+
 
 // ---------- create / resume manifest (F = dispatch, R = cancel/return)
 async function scanV(k){const m=k==='F'?cur:rcur,V=$('#v');if(m)return scanning(k);
  const cn=k==='F'?'manifests':'cmanifests';let open=[];
  V.innerHTML=`<div class="card"><h3>${k==='F'?'Create New Outward Manifest':'New Cancel/Return Manifest'}</h3>
- ${k==='F'?`<label>Seller</label><select id="s">${opts(cfg.sellers)}</select><label>Channel</label><select id="c">${opts(cfg.channels)}</select><label>Courier</label><select id="o">${opts(cfg.couriers)}</select>`:'<p class="mu">Seller, channel and courier are matched automatically from the dispatch scan.</p>'}
+ ${k==='F'?`${suggestField('s','Seller')}${suggestField('c','Channel')}${suggestField('o','Courier')}`:'<p class="mu">Seller, channel and courier are matched automatically from the dispatch scan.</p>'}
  <button style="width:100%;margin-top:12px" id="go">Submit – Create Manifest</button></div>
  <div id="opn"></div>`;
+ if(k==='F'){wireSuggest('s',cfg.sellers);wireSuggest('c',cfg.channels);wireSuggest('o',cfg.couriers)}
  const showO=r=>{open=r;if($('#opn'))$('#opn').innerHTML=r.length?`<div class="card"><h3>Open manifests (resume)</h3>${r.map(o=>`<div class="row" style="margin:4px 0"><span>${esc(o.id)}</span><button class="s g" data-r="${esc(o.id)}">Resume</button></div>`).join('')}</div>`:''},
   held=()=>Object.values(HELD).filter(o=>o.user===me.id&&(k==='F')===!!o.seller&&!CLOSED.has(o.id));
  showO(held());col(cn,[['user','==',me.id],['status','==','open']]).then(r=>showO([...held(),...r.filter(o=>!CLOSED.has(o.id)&&!HELD[o.id])]));
@@ -152,9 +156,10 @@ async function scanning(k){const m=k==='F'?cur:rcur,V=$('#v'),sn=k==='F'?'scans'
  let tm;const go=async()=>{clearTimeout(tm);const awb=inp.value.trim().toUpperCase().replace(/[\/\s]/g,'');if(!awb)return;if(busy){tm=setTimeout(go,200);return}inp.value='';busy=true;
   try{await one(k,m,awb);show()}catch(er){await dupe(awb,'Save error: '+(er.message||er.code)+'. Please scan again.')}busy=false;fb()};
  inp.onkeydown=e=>{if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();go()}};
- inp.oninput=()=>{clearTimeout(tm);if(inp.value.trim().length>=MINLEN)tm=setTimeout(go,AUTO_MS)};
+ inp.oninput=()=>{const pos=inp.selectionStart,upper=inp.value.toUpperCase();if(inp.value!==upper){inp.value=upper;try{inp.setSelectionRange(pos,pos)}catch(e){}}clearTimeout(tm);if(inp.value.trim().length>=MINLEN)tm=setTimeout(go,AUTO_MS)};
  const meta=()=>{const{list,...r}=m;return r};
- if($('#sw'))$('#sw').onclick=async()=>{const v=await modal(`<h3>Switch Seller / Courier</h3><p class="mu">Scans after switching go to a separate manifest and PDF.</p><label>Seller</label><select>${opts(cfg.sellers)}</select><label>Channel</label><select>${opts(cfg.channels)}</select><label>Courier</label><select>${opts(cfg.couriers)}</select><div class="row" style="margin-top:10px"><button class="g" data-v="no">Cancel</button><button data-v="ok">Switch</button></div>`);
+ if($('#sw'))$('#sw').onclick=async()=>{const vp=modal(`<h3>Switch Seller / Courier</h3><p class="mu">Scans after switching go to a separate manifest and PDF.</p>${suggestField('sw_s','Seller')}${suggestField('sw_c','Channel')}${suggestField('sw_o','Courier')}<div class="row" style="margin-top:10px"><button class="g" data-v="no">Cancel</button><button data-v="ok">Switch</button></div>`);
+  wireSuggest('sw_s',cfg.sellers);wireSuggest('sw_c',cfg.channels);wireSuggest('sw_o',cfg.couriers);const v=await vp;
   if(!v)return fb();if(!v[0]||!v[1]||!v[2]){toast('Please select Seller, Channel and Courier');return fb()}
   let t=SESS.find(x=>x.seller===v[0]&&x.channel===v[1]&&x.courier===v[2]);
   if(!t){t=(await col('manifests',[['user','==',me.id],['status','==','open']])).find(x=>x.seller===v[0]&&x.channel===v[1]&&x.courier===v[2])||await mkM('F',v[0],v[1],v[2]);SESS.push(t)}
