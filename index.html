@@ -174,23 +174,30 @@ async function scanning(k){const m=k==='F'?cur:rcur,V=$('#v'),sn=k==='F'?'scans'
  try{await init(k,m)}catch(e){toast('Load failed: '+(e.message||e));V.innerHTML='<div class="card er">Load failed. Please try again.</div>';return}
  V.innerHTML=`<div class="card"><div class="mu">${k==='F'?'OUTWARD DISPATCH':'CANCELLED'} MANIFEST</div><b>${esc(m.id)}</b><div class="mu">${esc(m.createdStr)}${k==='F'?' · '+esc(m.seller)+' / '+esc(m.channel)+' / '+esc(m.courier)+(SESS.length>1?' · session: '+SESS.length+' manifests':''):''}</div>
  <div class="big" id="cnt">0</div><div class="mu" style="text-align:center">scanned ${k==='F'?'/ '+MAX:''} · saved to Google Sheet</div><div class="mu" id="pend" style="text-align:center"></div>
- ${k==='F'?'<button class="s" id="sw" style="width:100%;margin-top:8px">⇄ Switch Seller / Courier</button>':''}<label>Scan AWB</label><input id="sc" inputmode="none" autocomplete="off" autocapitalize="characters" autofocus>
+ ${k==='F'?'<button class="s" id="sw" style="width:100%;margin-top:8px">⇄ Switch Seller / Courier</button>':''}<label>Scan / Type AWB</label><input id="sc" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Scan or type AWB here" autofocus>
+ <div class="row" style="margin-top:8px"><button class="g" id="manualSubmit" type="button">Submit AWB</button><button class="s" id="cameraStart" type="button">📷 Camera Scan</button></div><div id="cameraBox" class="card" style="display:none;margin-top:8px"><video id="cameraVideo" playsinline muted style="width:100%;max-height:300px;object-fit:contain;background:#111;border-radius:8px"></video><div class="row"><button class="r" id="cameraStop" type="button">Stop Camera</button></div><div class="mu">Barcode ko frame ke andar rakhein.</div></div>
  <div id="last" class="card" style="margin:8px 0 0"></div></div>
  <div class="row"><button class="g" id="hold">⏸ Hold (resume later)</button><button class="r" id="sub">Submit → Close</button></div><div class="card" style="margin-top:10px"><h3>Recent (✕ = remove)</h3><div id="rec"></div></div>`;
  const inp=$('#sc'),show=()=>{$('#cnt').textContent=m.list.size;$('#rec').innerHTML=[...m.list.values()].slice(-8).reverse().map(x=>`<div class="mu">${x.n}. ${esc(x.awb)} · ${esc(x.seller)}/${esc(x.channel)}/${esc(x.courier)} <a class="er" data-x="${esc(x.awb)}" style="padding:4px 8px">✕</a></div>`).join('')};show();
  const fb=()=>{if(!$('#ovl').innerHTML)inp.focus()};inp.onblur=()=>setTimeout(fb,80);
  $('#rec').onclick=async e=>{const a=e.target.dataset.x;if(!a)return;if(!await yn('Remove '+esc(a)+'?','Remove'))return fb();
   Q.F=Q.F.filter(i=>i.awb!==a);Q.R=Q.R.filter(i=>i.awb!==a);qsave();if(!await drain())return;const sl_=(m.list.get(a)||{}).seller||'';await gs('delScan',sn,a,sl_);m.list.delete(a);if(k==='F'){const l=KN.get(a);if(l){const g=l.filter(e=>e[2]!==sl_);g.length?KN.set(a,g):KN.delete(a)}}else RT.delete(sl_+'|'+a);log('void '+sn,a+' @ '+m.id);show();fb()};
- let busy=false;
- const go=async()=>{const awb=inp.value.trim().toUpperCase().replace(/[\/\\s]/g,'');if(!awb)return;
-  if(awb.length<MINLEN){toast('Incomplete AWB — scan again');return}
+ let busy=false, autoTimer=null, camStream=null, camActive=false;
+ const go=async()=>{clearTimeout(autoTimer);const awb=inp.value.trim().toUpperCase().replace(/[\/\s]/g,'');if(!awb)return;
+  if(awb.length<MINLEN){toast('Incomplete AWB — please scan/type the complete AWB');return}
   if(busy)return;
   inp.value='';busy=true;
   try{await one(k,m,awb);show()}catch(er){await dupe(awb,'Save error: '+(er.message||er.code)+'. Please scan again.')}finally{busy=false;fb()}};
- // Configure the barcode scanner to append Enter after each complete barcode.
- // Do not auto-submit on a pause: that can submit partial scans.
- inp.oninput=()=>{const pos=inp.selectionStart;inp.value=inp.value.toUpperCase();try{inp.setSelectionRange(pos,pos)}catch(e){}};
+ // HHD keyboard-wedge scanners can submit with Enter/Tab; idle fallback also supports scanners without suffix.
+ inp.oninput=()=>{const pos=inp.selectionStart;inp.value=inp.value.toUpperCase();try{inp.setSelectionRange(pos,pos)}catch(e){};clearTimeout(autoTimer);if(inp.value.trim().length>=MINLEN)autoTimer=setTimeout(()=>{if(inp.value.trim().length>=MINLEN)go()},550)};
  inp.onkeydown=e=>{if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();go()}};
+ $('#manualSubmit').onclick=()=>go();
+ const stopCamera=()=>{camActive=false;if(camStream){camStream.getTracks().forEach(t=>t.stop());camStream=null}const v=$('#cameraVideo');if(v)v.srcObject=null;const b=$('#cameraBox');if(b)b.style.display='none'};
+ $('#cameraStop').onclick=stopCamera;
+ $('#cameraStart').onclick=async()=>{if(!('BarcodeDetector' in window)){toast('Camera barcode scanning is not supported by this browser. Please use Chrome on Android or the HHD scanner.');return}if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){toast('Camera requires HTTPS and browser camera permission.');return}
+  try{const detector=new BarcodeDetector({formats:['code_128','code_39','codabar','ean_13','ean_8','itf','qr_code','upc_a','upc_e']});camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});const v=$('#cameraVideo');v.srcObject=camStream;$('#cameraBox').style.display='block';await v.play();camActive=true;
+   const tick=async()=>{if(!camActive)return;try{if(v.readyState>=2){const codes=await detector.detect(v);if(codes&&codes.length&&codes[0].rawValue){const val=String(codes[0].rawValue).toUpperCase().trim();if(val.length>=MINLEN){stopCamera();inp.value=val;await go();return}}}}catch(e){}if(camActive)requestAnimationFrame(tick)};requestAnimationFrame(tick);
+  }catch(e){stopCamera();toast('Camera could not start. Allow camera permission and open this app using HTTPS.')}};
  const meta=()=>{const{list,...r}=m;return r};
  if($('#sw'))$('#sw').onclick=async()=>{let v=await modal(`<h3>Switch Seller / Courier</h3><p class="mu">Scans after switching go to a separate manifest and PDF.</p>${cbo('w1','Seller',cfg.sellers)}${cbo('w2','Channel',cfg.channels)}${cbo('w3','Courier',cfg.couriers)}<div class="row" style="margin-top:10px"><button class="g" data-v="no">Cancel</button><button data-v="ok">Switch</button></div>`);
   if(!v)return fb();v=[canon(cfg.sellers,v[0]),canon(cfg.channels,v[1]),canon(cfg.couriers,v[2])];if(!v[0]||!v[1]||!v[2]){toast('Please choose Seller, Channel and Courier from the list');return fb()}
