@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Manifest &amp; Dispatch WMS</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--tx:#1a1d23;--mu:#6b7280;--ac:#1d4ed8;--bd:#d9dce2;--ok:#15803d;--er:#b91c1c;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111317;--card:#1b1e24;--tx:#eceef2;--mu:#9aa1ad;--ac:#6b9bff;--bd:#2d323b;--ok:#4ade80;--er:#f87171}}
+:root[data-theme="dark"]{--bg:#111317;--card:#1b1e24;--tx:#eceef2;--mu:#9aa1ad;--ac:#6b9bff;--bd:#2d323b;--ok:#4ade80;--er:#f87171}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--tx);font:15px system-ui,sans-serif}
+main{padding:10px 10px 20px 98px;max-width:760px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:10px}
+h3{margin:0 0 8px;font-size:16px}label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}
+input,select{width:100%;padding:11px;font-size:16px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx)}
+button{padding:11px 14px;font-size:15px;border:3px solid var(--tx);border-radius:6px;background:var(--ac);color:#fff;font-weight:600;min-height:46px;padding-left:24px;padding-right:24px;letter-spacing:.3px}
+button.g{background:var(--bd);color:var(--tx)}button.r{background:var(--er)}button.s{padding:6px 16px;min-height:34px;font-size:13px}
+.row{display:flex;gap:6px;align-items:center}.row>*{flex:1}.row>button.p{flex:0 0 96px}
+nav{position:fixed;top:66px;bottom:0;left:0;width:88px;display:flex;flex-direction:column;gap:6px;padding:8px 6px;background:var(--card);border-right:3px solid var(--bd);overflow-y:auto}nav button{width:100%;background:var(--bg);color:var(--tx);border:3px solid var(--bd);padding:10px 2px;font-size:11px}nav button.on{border-color:var(--ac);color:var(--ac)}nav button b{display:block;font-size:20px}
+.seg{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}.seg button{flex:1;background:var(--bg);color:var(--tx)}.seg button.on{background:var(--ac);color:#fff}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:10px}.tile{background:var(--card);border:2px solid var(--bd);border-radius:10px;padding:10px;text-align:center}.bar{height:10px;background:var(--bd);border-radius:5px;overflow:hidden}.bar i{display:block;height:100%;background:var(--ac)}
+.big{font-size:34px;font-weight:700;text-align:center}.mu{color:var(--mu);font-size:12px}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9}
+.ov .bx{background:var(--card);border-radius:12px;padding:18px;width:100%;max-width:420px}.ov.bad .bx{border:4px solid var(--er)}
+.ok{color:var(--ok)}.er{color:var(--er)}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border-bottom:1px solid var(--bd);padding:5px 6px;text-align:left;white-space:nowrap}
+.hd{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--card);border-bottom:1px solid var(--bd)}
+.chip{display:inline-block;background:var(--bg);border:1px solid var(--bd);border-radius:12px;padding:2px 8px;margin:2px;font-size:12px}.chip a{color:var(--er);cursor:pointer;padding:0 3px}
+#toast{position:fixed;top:60px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:8px 14px;border-radius:8px;z-index:20;display:none}
+</style></head><body>
+<div id="toast"></div><div id="app"></div><div id="ovl"></div>
+<script>
+const $=s=>document.querySelector(s),A=$('#app');
+const ist=(d=new Date())=>d.toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:true});
+const dayK=(d=new Date())=>d.toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'});
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const sha=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(b=>b.toString(16).padStart(2,'0')).join('');
+let db,cfg,me,cur=null,rcur=null,tab='scan',unsub=null,MAX=2000;
+function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',2500)}
+function beep(){try{const c=new AudioContext(),o=c.createOscillator();o.frequency.value=220;o.type='square';o.connect(c.destination);o.start();setTimeout(()=>{o.stop();c.close()},500);navigator.vibrate&&navigator.vibrate([300,100,300])}catch(e){}}
+function modal(html,bad){return new Promise(res=>{const o=$('#ovl');o.innerHTML=`<div class="ov ${bad?'bad':''}"><div class="bx">${html}</div></div>`;o.onclick=e=>{const v=e.target.dataset?.v;if(v!==undefined){const iv=[...o.querySelectorAll('input,select')].map(i=>i.value);o.innerHTML='';res(v==='ok'?(iv.length?iv:true):false)}};setTimeout(()=>o.querySelector('input')?.focus(),50)})}
+const ask=async t=>{const r=await modal(`<h3>${t}</h3><input autocapitalize="characters"><div class="row" style="margin-top:10px"><button class="g" data-v="no">Cancel</button><button data-v="ok">Add</button></div>`);return r&&r[0]};
+const yn=(t,b='Confirm')=>modal(`<h3>${t}</h3><div class="row"><button class="g" data-v="no">Back</button><button class="r" data-v="ok">${b}</button></div>`);
+const dupe=(a,w)=>{beep();return modal(`<h3 class="er">⚠ DUPLICATE / ERROR</h3><p><b>${esc(a)}</b></p><p>${w}</p><p class="mu">Set this shipment aside, then press OK.</p><button class="r" style="width:100%" data-v="ok">Shipment set aside – OK</button>`,1)};
+async function save(name,data){try{const b=new Blob([data],{type:'application/octet-stream'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1500)}catch(e){toast('Download failed: '+e.message)}}
+function csv(rows){if(!rows.length)return'';const k=Object.keys(rows[0]);return '\ufeff'+[k.join(','),...rows.map(r=>k.map(c=>'"'+String(r[c]??'').replace(/"/g,'""')+'"').join(','))].join('\n')}
+const col=async(n,q)=>{let c=db.collection(n);(q||[]).forEach(w=>c=c.where(...w));return(await c.get()).docs.map(d=>d.data())};
+const sf=s=>s.replace(/[^A-Za-z0-9]/g,'').slice(0,3).toUpperCase();
+const log=(a,d)=>gs('add','audit',{id:Date.now()+'-'+Math.random().toString(36).slice(2,6),a,d,user:me.id,ts:ist(),day:dayK()}).catch(()=>{});
+const crow=(m,arr,k)=>arr.map((x,i)=>({Serial:i+1,Manifest:m.id,Seller:x.seller,Channel:x.channel,Courier:x.courier,AWB:x.awb,...(k==='R'?{ForwardManifest:x.fm}:{}),ScannedAt:x.tsStr,User:x.user}));
+
+const SS={g:k=>{try{return sessionStorage.getItem(k)}catch(e){return null}},s:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},r:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
+// Backend address (your Apps Script web app). Used when this page is hosted outside Google, e.g. GitHub Pages.
+const WEBAPP_URL='https://script.google.com/macros/s/AKfycbzhMqIkDBu-Y-2LPhC3_I0WRhiVMETqMHbj6YgWLzwEUlOENbBAXlHsI1YGvAkwfH8a/exec';
+const gs=(op,...a)=>window.google&&google.script&&google.script.run
+ ?new Promise((ok,no)=>google.script.run.withSuccessHandler(ok).withFailureHandler(e=>no(new Error(e&&e.message||e))).api(op,...JSON.parse(JSON.stringify(a))))
+ :fetch(WEBAPP_URL,{method:'POST',body:JSON.stringify({args:[op,...a]})}).then(r=>r.json()).then(j=>{if(!j.ok)throw new Error(j.e);return j.r});
+function mkdb(){const D=(c,id)=>({get:async()=>{const r=await gs('get',c,id);return{exists:!!r,data:()=>r}},set:o=>gs('set',c,id,o),delete:()=>gs('del',c,id)});
+ return{doc:p=>{const i=p.indexOf('/');return D(p.slice(0,i),p.slice(i+1))},collection:c=>{const w=[],q={where:(...a)=>{w.push(a);return q},get:async()=>({docs:(await gs('query',c,w)).map(x=>({data:()=>x}))}),doc:id=>D(c,id),onSnapshot:f=>{let on=1,t;const run=async()=>{try{const r=await q.get();on&&f(r)}catch(e){}if(on)t=setTimeout(run,8000)};run();return()=>{on=0;clearTimeout(t)}}};return q}}}
+// fast scanning: instant local checks, background batch sync to the Sheet
+let KN=new Map(),RT=new Map(),Q={F:[],R:[]},fl=false;
+const pend=()=>{const e=$('#pend');if(e){const n=Q.F.length+Q.R.length;e.textContent=n?'Syncing '+n+'…':'✔ All synced'}};
+async function loadKN(k){const r=await gs('awbs','scans');KN=new Map(r.rows.map(x=>[x[0],x]));KN.n=r.total;if(k==='R'){const q=await gs('awbs','returns');RT=new Map(q.rows.map(x=>[x[0],x[1]]))}}
+async function flush(){if(fl)return;fl=true;try{for(const k of['F','R'])while(Q[k].length){const b=Q[k].splice(0,300);let r;try{r=await gs('saveScans',k,b)}catch(e){Q[k].unshift(...b);throw e}
+ for(const d of r.dups||[]){const it=b.find(x=>x.awb===d.awb);if(it&&(it.manifest||it.cm)===d.manifest)continue;[...SESS,cur,rcur].forEach(x=>x&&x.list&&x.list.delete(d.awb));const m=k==='F'?cur:rcur;k==='F'?KN.set(d.awb,[d.awb,d.manifest,'','','','']):RT.set(d.awb,d.manifest);const c=$('#cnt');if(c&&m&&m.list)c.textContent=m.list.size;dupe(d.awb,'Rejected by server – already scanned in <b>'+esc(d.manifest)+'</b>.')}}}catch(e){toast('Sync error, retrying: '+(e.message||e))}fl=false;pend()}
+const drain=async()=>{for(let i=0;i<40&&(Q.F.length||Q.R.length||fl);i++){await flush();await new Promise(r=>setTimeout(r,250))}if(Q.F.length||Q.R.length){toast('Sync pending – check connection and try again');return false}return true};
+setInterval(flush,2000);
+let SESS=[],cfg0;
+let KNl={F:0,R:0};
+const MINLEN=6,AUTO_MS=120;   // auto-submit: AWB with at least MINLEN characters, AUTO_MS after the last scanner character
+const mt=x=>{const{list,new:_n,...r}=x;return r};
+const snap=()=>JSON.stringify({s:cfg.sellers,c:cfg.channels,o:cfg.couriers,u:cfg.users});
+async function saveCfg(){const o=JSON.parse(cfg0),P={add:{},rem:{},uset:[],udel:[]};  // send only the changes; server merges atomically
+ ['sellers','channels','couriers'].forEach((k,i)=>{const a=o['sco'[i]];P.add[k]=cfg[k].filter(x=>!a.includes(x));P.rem[k]=a.filter(x=>!cfg[k].includes(x))});
+ cfg.users.forEach(u=>{const p=o.u.find(x=>x.id===u.id);if(!p||JSON.stringify(p)!==JSON.stringify(u))P.uset.push(u)});o.u.forEach(p=>{if(!cfg.users.find(u=>u.id===p.id))P.udel.push(p.id)});
+ cfg=await gs('cfgPatch',P);cfg0=snap();try{localStorage.setItem('wms_cfg',JSON.stringify(cfg))}catch(e){}}
+async function mkM(k,s,c,o){const n=new Date(),id=(k==='F'?`${sf(s)}-${sf(c)}-${sf(o)}-`:'CNL-')+dayK(n).replace(/-/g,'').slice(2)+'-'+n.toLocaleTimeString('en-GB',{timeZone:'Asia/Kolkata'}).replace(/:/g,'').slice(0,6)+Math.floor(Math.random()*90+10);
+ const m={id,seller:s||'',channel:c||'',courier:o||'',user:me.id,created:n.toISOString(),createdStr:ist(n),day:dayK(n),status:'open',count:0};
+ m.new=1;return m}
+let syn=0;async function syncKN(){if(KN.n===undefined||fl||syn)return;syn=1;try{const r=await gs('tail','scans',KN.n);if(r.reset)await loadKN('F');else{r.rows.forEach(x=>{if(!KN.has(x[0]))KN.set(x[0],x)});KN.n=r.total}}catch(e){}syn=0}
+setInterval(()=>{if($('#sc'))syncKN()},4000);
+async function boot(){
+ db=mkdb();A.innerHTML='<main><div class="card mu">Connecting to Google Sheet…</div></main>';
+ let cc=null;try{cc=JSON.parse(localStorage.getItem('wms_cfg'))}catch(e){}
+ if(cc&&cc.users){cfg=cc;cfg0=snap();const u0=SS.g('u');if(u0)me=cfg.users.find(x=>x.id===u0);me?home():login();   // instant start from the saved lists; refresh quietly in the background
+  db.doc('config/main').get().then(r=>{if(r.exists){cfg=r.data();cfg0=snap();try{localStorage.setItem('wms_cfg',JSON.stringify(cfg))}catch(e){}}}).catch(()=>{});return}
+ const s=await db.doc('config/main').get();
+ cfg=s.exists?s.data():{sellers:[],channels:[],couriers:[],users:[{id:'admin',pw:'admin123',role:'admin'}]};
+ cfg0=s.exists?snap():'{"s":[],"c":[],"o":[],"u":[]}';if(!s.exists)await saveCfg();try{localStorage.setItem('wms_cfg',JSON.stringify(cfg))}catch(e){}
+ const u=SS.g('u');if(u)me=cfg.users.find(x=>x.id===u);
+ me?home():login()}
+function login(){A.innerHTML=`<main><div class="card"><h3>📦 Manifest &amp; Dispatch WMS</h3><label>User ID</label><input id="u" autocapitalize="none"><label>Password</label><input id="p" type="password"><button style="width:100%;margin-top:12px" id="lg">Login</button><div class="mu" style="font-size:10px;margin-top:2px;text-align:right">Owned By Arvind</div></div></main>`;
+ $('#lg').onclick=async()=>{const id=$('#u').value.trim(),p=$('#p').value,h=await sha(p),ff=()=>cfg.users.find(x=>x.id===id&&(x.ph===h||(!x.ph&&x.pw===p)));let x=ff();if(!x){try{const f=await db.doc('config/main').get();if(f.exists){cfg=f.data();cfg0=snap()}}catch(e){}x=ff()}if(!x)return toast('Invalid ID or password');
+  if(!x.ph){x.ph=h;delete x.pw;await saveCfg()}me=x;SS.s('u',x.id);home()}}
+function home(){const T=[['scan','Dispatch','📤'],['ret','Return','↩️'],['mf','Manifests','📋'],['dash','Dashboard','📊'],['rep','Reports','📑'],...(me.role==='admin'?[['adm','Admin','⚙️']]:[])];
+ A.innerHTML=`<div class="hd"><b>📦 Manifest &amp; Dispatch WMS</b><div><span class="mu">${esc(me.id)} (${me.role}) <button class="s g" id="lo">Logout</button></span><div class="mu" style="font-size:10px;margin-top:2px;text-align:right">Owned By Arvind</div></div></div><main id="v"></main><nav>${T.map(t=>`<button data-t="${t[0]}" class="${tab===t[0]?'on':''}"><b>${t[2]}</b>${t[1]}</button>`).join('')}</nav>`;
+ $('#lo').onclick=()=>{SS.r('u');cur=rcur=null;SESS=[];KNl={F:0,R:0};me=null;login()};
+ document.querySelector('nav').onclick=e=>{if(e.target.dataset.t){tab=e.target.dataset.t;home()}};
+ if(unsub){unsub();unsub=null}
+ ({scan:()=>scanV('F'),ret:()=>scanV('R'),mf,dash,rep,adm})[tab]()}
+const opts=a=>'<option value="">-- select --</option>'+a.map(x=>`<option>${esc(x)}</option>`).join('');
+
+// ---------- create / resume manifest (F = dispatch, R = cancel/return)
+async function scanV(k){const m=k==='F'?cur:rcur,V=$('#v');if(m)return scanning(k);
+ const cn=k==='F'?'manifests':'cmanifests';let open=[];
+ V.innerHTML=`<div class="card"><h3>${k==='F'?'Create New Outward Manifest':'New Cancel/Return Manifest'}</h3>
+ ${k==='F'?`<label>Seller</label><select id="s">${opts(cfg.sellers)}</select><label>Channel</label><select id="c">${opts(cfg.channels)}</select><label>Courier</label><select id="o">${opts(cfg.couriers)}</select>`:'<p class="mu">Seller, channel and courier are matched automatically from the dispatch scan.</p>'}
+ <button style="width:100%;margin-top:12px" id="go">Submit – Create Manifest</button></div>
+ <div id="opn"></div>`;
+ col(cn,[['user','==',me.id],['status','==','open']]).then(r=>{open=r;if(r.length&&$('#opn'))$('#opn').innerHTML=`<div class="card"><h3>Open manifests (resume)</h3>${r.map(o=>`<div class="row" style="margin:4px 0"><span>${esc(o.id)}</span><button class="s g" data-r="${esc(o.id)}">Resume</button></div>`).join('')}</div>`});
+ V.onclick=e=>{const r=e.target.dataset.r;if(r){const o=open.find(x=>x.id===r);if(k==='F'){cur=o;SESS=[o]}else rcur=o;scanning(k)}};
+ if(k==='F'){const add=(id,key)=>{if($(id))$(id).onclick=async()=>{const v=await ask('New '+key);if(v&&v.trim()&&!cfg[key+'s'].includes(v.trim().toUpperCase())){cfg[key+'s'].push(v.trim().toUpperCase());await saveCfg();scanV(k)}}};add('#as','seller');add('#ac','channel');add('#ao','courier')}
+ $('#go').onclick=async()=>{let s,c,o;
+  if(k==='F'){s=$('#s').value;c=$('#c').value;o=$('#o').value;if(!s||!c||!o)return toast('Please select Seller, Channel and Courier')}
+  const m=await mkM(k,s,c,o);if(k==='F'){cur=m;SESS=[m]}else rcur=m;scanning(k)}}
+
+async function scanning(k){const m=k==='F'?cur:rcur,V=$('#v'),sn=k==='F'?'scans':'returns',cn=k==='F'?'manifests/':'cmanifests/';
+ V.innerHTML='<div class="card mu">Loading…</div>';
+ if(!m.list||!KNl[k]){try{const nw=m.new,r=await gs('scanInit',k,m.id,nw?mt(m):null,!KNl[k]);if(!m.list)m.list=new Map(r.mine.sort((a,b)=>a.n-b.n).map(x=>[x.awb,x]));
+  if(!KNl[k]){KN=new Map(r.rows.map(x=>[x[0],x]));KN.n=r.total;if(k==='R')RT=new Map(r.rt);KNl[k]=1}if(nw){delete m.new;log('create',m.id)}}
+  catch(e){toast('Load failed: '+(e.message||e));V.innerHTML='<div class="card er">Load failed. Please try again.</div>';return}}
+ V.innerHTML=`<div class="card"><div class="mu">${k==='F'?'OUTWARD DISPATCH':'CANCELLED'} MANIFEST</div><b>${esc(m.id)}</b><div class="mu">${esc(m.createdStr)}${k==='F'?' · '+esc(m.seller)+' / '+esc(m.channel)+' / '+esc(m.courier)+(SESS.length>1?' · session: '+SESS.length+' manifests':''):''}</div>
+ <div class="big" id="cnt">0</div><div class="mu" style="text-align:center">scanned ${k==='F'?'/ '+MAX:''} · saved to Google Sheet</div><div class="mu" id="pend" style="text-align:center"></div>
+ ${k==='F'?'<button class="s" id="sw" style="width:100%;margin-top:8px">⇄ Switch Seller / Courier</button>':''}<label>Scan AWB</label><input id="sc" inputmode="none" autocomplete="off" autocapitalize="characters" autofocus>
+ <div id="last" class="card" style="margin:8px 0 0"></div></div>
+ <div class="row"><button class="g" id="hold">⏸ Hold (resume later)</button><button class="r" id="sub">Submit → Close</button></div><div class="card" style="margin-top:10px"><h3>Recent (✕ = remove)</h3><div id="rec"></div></div>`;
+ const inp=$('#sc'),show=()=>{$('#cnt').textContent=m.list.size;$('#rec').innerHTML=[...m.list.values()].slice(-8).reverse().map(x=>`<div class="mu">${x.n}. ${esc(x.awb)} · ${esc(x.seller)}/${esc(x.channel)}/${esc(x.courier)} <a class="er" data-x="${esc(x.awb)}" style="padding:4px 8px">✕</a></div>`).join('')};show();
+ const fb=()=>{if(!$('#ovl').innerHTML)inp.focus()};inp.onblur=()=>setTimeout(fb,80);
+ $('#rec').onclick=async e=>{const a=e.target.dataset.x;if(!a)return;if(!await yn('Remove '+esc(a)+'?','Remove'))return fb();
+  Q.F=Q.F.filter(i=>i.awb!==a);Q.R=Q.R.filter(i=>i.awb!==a);if(!await drain())return;await db.doc(sn+'/'+a).delete();m.list.delete(a);if(k==='F')KN.delete(a);else RT.delete(a);log('void '+sn,a+' @ '+m.id);show();fb()};
+ let busy=false;
+ let tm;const go=async()=>{clearTimeout(tm);const awb=inp.value.trim().toUpperCase().replace(/[\/\s]/g,'');if(!awb)return;if(busy){tm=setTimeout(go,200);return}inp.value='';busy=true;
+  try{await one(k,m,awb);show()}catch(er){await dupe(awb,'Save error: '+(er.message||er.code)+'. Please scan again.')}busy=false;fb()};
+ inp.onkeydown=e=>{if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();go()}};
+ inp.oninput=()=>{clearTimeout(tm);if(inp.value.trim().length>=MINLEN)tm=setTimeout(go,AUTO_MS)};
+ const meta=()=>{const{list,...r}=m;return r};
+ if($('#sw'))$('#sw').onclick=async()=>{const v=await modal(`<h3>Switch Seller / Courier</h3><p class="mu">Scans after switching go to a separate manifest and PDF.</p><label>Seller</label><select>${opts(cfg.sellers)}</select><label>Channel</label><select>${opts(cfg.channels)}</select><label>Courier</label><select>${opts(cfg.couriers)}</select><div class="row" style="margin-top:10px"><button class="g" data-v="no">Cancel</button><button data-v="ok">Switch</button></div>`);
+  if(!v)return fb();if(!v[0]||!v[1]||!v[2]){toast('Please select Seller, Channel and Courier');return fb()}
+  let t=SESS.find(x=>x.seller===v[0]&&x.channel===v[1]&&x.courier===v[2]);
+  if(!t){t=(await col('manifests',[['user','==',me.id],['status','==','open']])).find(x=>x.seller===v[0]&&x.channel===v[1]&&x.courier===v[2])||await mkM('F',v[0],v[1],v[2]);SESS.push(t)}
+  cur=t;scanning('F')};
+ $('#hold').onclick=async()=>{if(!await drain())return;await gs('setMany',cn.slice(0,-1),(k==='F'?SESS:[m]).map(x=>{x.count=x.list?x.list.size:x.count;return mt(x)}));if(k==='F'){cur=null;SESS=[]}else rcur=null;scanV(k)};
+ $('#sub').onclick=async()=>{const A=k==='F'?SESS:[m],L=A.filter(x=>x.list&&x.list.size);if(!L.length)return toast('No AWB scanned yet');if(!await drain())return;
+  if(!await modal(`<h3>Close ${L.length>1?L.length+' manifests':'manifest'}?</h3><p>${L.map(x=>(x.seller?esc(x.seller)+' / '+esc(x.courier):'Cancelled')+': <b>'+x.list.size+'</b> AWB').join('<br>')}</p><p class="mu">A separate manifest &amp; PDF is created for each. Once closed it cannot be edited (only an admin can reopen it).</p><div class="row"><button class="g" data-v="no">Back</button><button data-v="ok">Close</button></div>`))return fb();
+  const n=new Date(),R=[],S=[],E=[];for(const x of A){if(!x.list.size){E.push(x.id);continue}Object.assign(x,{status:'closed',count:x.list.size,closed:n.toISOString(),closedStr:ist(n)});S.push(mt(x));R.push({m:mt(x),arr:[...x.list.values()]})}
+  await gs('setMany',cn.slice(0,-1),S,E);S.forEach(x=>log('close',x.id+' ('+x.count+')'))
+  if(k==='F'){cur=null;SESS=[]}else rcur=null;done(k,R)}}
+
+async function one(k,m,awb){const L=$('#last'),nx=Math.max(0,...[...m.list.values()].map(x=>x.n))+1;
+ if(m.list.has(awb))return void await dupe(awb,'This AWB is already scanned in this manifest.');
+ const b=()=>({awb,n:nx,user:me.id,ts:new Date().toISOString(),tsStr:ist(),day:dayK()});
+ if(k==='F'){if(m.list.size>=MAX)return void await dupe(awb,'Limit of '+MAX+' AWB reached. Please close the manifest.');
+  const d=KN.get(awb);if(d)return void await dupe(awb,`Already scanned in manifest <b>${esc(d[1])}</b> by ${esc(d[5])}.`);
+  const x={...b(),manifest:m.id,seller:m.seller,channel:m.channel,courier:m.courier};m.list.set(awb,x);KN.set(awb,[awb,m.id,m.seller,m.channel,m.courier,me.id]);Q.F.push(x);
+  L.innerHTML=`<b class="ok">✔ ${esc(awb)}</b><div class="mu">#${x.n}</div>`}
+ else{const f=KN.get(awb);if(!f)return void await dupe(awb,'This AWB was not found in the dispatch scans.');if(RT.has(awb))return void await dupe(awb,`Already cancelled in ${esc(RT.get(awb))}.`);
+  const x={...b(),cm:m.id,fm:f[1],seller:f[2],channel:f[3],courier:f[4]};m.list.set(awb,x);RT.set(awb,m.id);Q.R.push(x);
+  L.innerHTML=`<b class="ok">✔ MATCHED ${esc(awb)}</b><div>${esc(f[2])} / ${esc(f[3])} / ${esc(f[4])}</div><div class="mu">Not picked against: ${esc(f[1])}</div>`}
+ pend()}
+
+function done(k,items){items.sort((a,b)=>(a.m.courier+a.m.seller).localeCompare(b.m.courier+b.m.seller));
+ $('#v').innerHTML=`<div class="card"><h3 class="ok">${items.length>1?items.length+' manifests':'Manifest'} closed &amp; saved ✔</h3><p class="mu">Separate PDF per seller / courier. You can download again anytime from the Manifests tab.</p>${items.map((x,i)=>`<div style="border-top:1px solid var(--bd);padding:8px 0"><b>${esc(x.m.id)}</b><div class="mu">${k==='F'?esc(x.m.seller)+' / '+esc(x.m.channel)+' / '+esc(x.m.courier)+' · ':''}${x.arr.length} AWB</div><div class="row" style="margin-top:6px"><button class="s" data-p="${i}">⬇ PDF</button><button class="s g" data-c="${i}">⬇ CSV</button></div></div>`).join('')}${items.length>1?'<button style="width:100%;margin:8px 0" id="da">⬇ Download all PDFs</button>':''}<button class="g" style="width:100%" id="nw">New manifest</button></div>`;
+ $('#v').onclick=e=>{const t=e.target.dataset,i=t.p!==undefined?t.p:t.c;if(i===undefined)return;const x=items[i];t.p!==undefined?pdf(x.m,x.arr,k):save(x.m.id+'.csv',csv(crow(x.m,x.arr,k)))};
+ if($('#da'))$('#da').onclick=async()=>{for(const x of items){pdf(x.m,x.arr,k);await new Promise(r=>setTimeout(r,700))}};$('#nw').onclick=()=>scanV(k)}
+
+function pdf(m,arr,k){const{jsPDF}=window.jspdf,d=new jsPDF(),R=k==='R';
+ if(R)arr=[...arr].sort((a,b)=>(a.seller+a.channel).localeCompare(b.seller+b.channel));
+ d.setFontSize(14);d.setFont(undefined,'bold');d.text(R?'CANCELLED MANIFEST':'OUTWARD DISPATCH MANIFEST',14,12);d.setFont(undefined,'normal');d.setFontSize(8);
+ try{const c=document.createElement('canvas');JsBarcode(c,m.id,{format:'CODE128',displayValue:true,fontSize:16,height:60,width:2,margin:6});d.addImage(c.toDataURL('image/png'),'PNG',110,6,86,86*c.height/c.width)}catch(e){}
+ [`Manifest ID: ${m.id}`,`Created (IST): ${m.createdStr}`,`Closed (IST): ${m.closedStr||'-'}`].forEach((t,i)=>d.text(t,14,19+i*4.2));
+ [`Total packets: ${arr.length}`,`Scanned by: ${m.user}`,m.hand?`Handover: ${m.hand.by} / ${m.hand.veh||'-'}`:''].forEach((t,i)=>t&&d.text(t,110,24+i*4.2));
+ // A4 fit: 50 to 100 AWB lines per page, font sized so that paper use stays low
+ const n=arr.length,per=Math.min(100,Math.max(50,n)),h=(297-34-24)/(per+1),f=Math.min(10,Math.max(4.8,(h-.3)/.43));
+ const head=R?['#','Seller','Channel','Courier','AWB','Fwd Manifest (Not Picked)']:['#','Seller','Channel','Courier','AWB No'],
+ row=(x,i)=>R?[i+1,x.seller,x.channel,x.courier,x.awb,x.fm]:[i+1,x.seller,x.channel,x.courier,x.awb];
+ for(let i=0;i<Math.max(n,1);i+=per){if(i)d.addPage();
+  d.autoTable({startY:i?12:34,head:[head],body:arr.slice(i,i+per).map((x,j)=>row(x,i+j)),margin:{left:14,right:14,top:12,bottom:24},theme:'grid',
+   styles:{fontSize:f,cellPadding:{top:.15,bottom:.15,left:1.5,right:1.5},lineWidth:.1,lineColor:[190,190,190]},headStyles:{fillColor:[40,40,40],fontSize:f}})}
+ let y=Math.max(d.lastAutoTable.finalY+10,274);if(y>284){d.addPage();y=40}
+ d.line(14,y,80,y);d.line(130,y,196,y);d.setFontSize(9);d.text('Courier Pickup Person Sign',14,y+5);d.text('Dispatch Incharge Sign',130,y+5);
+ const pg=d.getNumberOfPages();for(let i=1;i<=pg;i++){d.setPage(i);d.setFontSize(8);d.text(`${m.id}  |  Page ${i}/${pg}`,14,291)}
+ save(m.id+'.pdf',d.output('arraybuffer'))}
+
+// ---------- manifest history, AWB search, handover, reopen
+function mf(){const V=$('#v'),t=dayK();let ms=[];
+ V.innerHTML=`<div class="card"><h3>🔎 AWB Search</h3><div class="row"><input id="qa" autocapitalize="characters" placeholder="AWB"><button class="p" style="flex:0 0 96px" id="qb">Find</button></div><div id="qo" style="margin-top:8px"></div></div>
+ <div class="card"><h3>Manifest History (download anytime)</h3><div class="row"><div><label>From</label><input type="date" id="f" value="${t}"></div><div><label>To</label><input type="date" id="t" value="${t}"></div></div>
+ <div class="row"><div><label>Type</label><select id="ty"><option value="manifests">Dispatch</option><option value="cmanifests">Cancel/Return</option></select></div><div><label>Status</label><select id="st"><option value="">All</option><option>open</option><option>closed</option><option>handed</option></select></div></div>
+ <button style="width:100%;margin-top:10px" id="go">Search</button></div><div id="out"></div>`;
+ $('#qb').onclick=async()=>{const a=$('#qa').value.trim().toUpperCase().replace(/[\/\s]/g,''),o=$('#qo');if(!a)return;
+  const[s,r]=await Promise.all([db.doc('scans/'+a).get(),db.doc('returns/'+a).get()]);if(!s.exists)return o.innerHTML='<span class="er">No scan found for this AWB.</span>';
+  const d=s.data(),c=r.exists?r.data():null,mm=await db.doc('manifests/'+d.manifest).get(),md=mm.exists?mm.data():{};
+  o.innerHTML=`<b>${esc(a)}</b><br>${esc(d.seller)} / ${esc(d.channel)} / ${esc(d.courier)}<br>Manifest: ${esc(d.manifest)} (${esc(md.status||'')}) · ${esc(d.tsStr)} · ${esc(d.user)}<br>${c?`<span class="er">CANCELLED in ${esc(c.cm)} · ${esc(c.tsStr)}</span>`:'<span class="ok">Dispatched</span>'}${md.hand?`<br>Handover: ${esc(md.hand.by)} ${esc(md.hand.veh)} · ${esc(md.hand.at)}`:''}`};
+ $('#go').onclick=async()=>{const cn=$('#ty').value,F=cn==='manifests',st=$('#st').value,o=$('#out');o.innerHTML='<div class="card mu">Loading…</div>';
+  ms=(await col(cn,[['day','>=',$('#f').value],['day','<=',$('#t').value]])).filter(m=>!st||m.status===st).sort((a,b)=>b.created.localeCompare(a.created));
+  o.innerHTML=ms.length?`<div class="card"><div class="tw"><table><tr><th>Manifest</th><th>Seller</th><th>Courier</th><th>Pkts</th><th>Status</th><th></th></tr>${ms.map((m,i)=>`<tr><td>${esc(m.id)}<div class="mu">${esc(m.createdStr)}</div></td><td>${esc(m.seller)}</td><td>${esc(m.courier)}</td><td>${m.count||0}</td><td>${esc(m.status)}${m.hand?'<div class="mu">'+esc(m.hand.by)+'</div>':''}</td><td><button class="s" data-a="p" data-i="${i}">PDF</button> <button class="s g" data-a="c" data-i="${i}">CSV</button>${F&&m.status==='closed'?` <button class="s" data-a="h" data-i="${i}">Handover</button>`:''}${me.role==='admin'&&m.status!=='open'?` <button class="s r" data-a="o" data-i="${i}">Reopen</button>`:''}</td></tr>`).join('')}</table></div></div>`:'<div class="card mu">No manifests found.</div>';
+  o.onclick=async e=>{const i=e.target.dataset.i,a=e.target.dataset.a;if(i===undefined)return;const m=ms[i];
+   if(a==='h'){const v=await modal(`<h3>Courier Handover</h3><label>Pickup person name</label><input><label>Vehicle no.</label><input autocapitalize="characters"><div class="row" style="margin-top:10px"><button class="g" data-v="no">Cancel</button><button data-v="ok">Confirm</button></div>`);if(!v||!v[0].trim())return;
+    m.hand={by:v[0].trim(),veh:v[1].trim().toUpperCase(),at:ist(),user:me.id};m.status='handed';await db.doc('manifests/'+m.id).set(m);log('handover',m.id);return $('#go').click()}
+   if(a==='o'){if(!await yn('Reopen '+esc(m.id)+'?','Reopen'))return;m.status='open';delete m.hand;await db.doc(cn+'/'+m.id).set(m);log('reopen',m.id);return $('#go').click()}
+   const arr=(await col(F?'scans':'returns',[[F?'manifest':'cm','==',m.id]])).sort((a,b)=>a.n-b.n);
+   a==='p'?pdf(m,arr,F?'F':'R'):save(m.id+'.csv',csv(crow(m,arr,F?'F':'R')))}}}
+
+// ---------- dashboard
+let dv={g:'seller',s:'bars',d:null};
+function dash(){const V=$('#v');dv.d=dv.d||dayK();let S=[],Rt=[],Mn=[];
+ const draw=()=>{const cnt=(a)=>{const o={};a.forEach(x=>o[x[dv.g]]=(o[x[dv.g]]||0)+1);return o},o=cnt(S),C=cnt(Rt),rows=Object.entries(o).sort((a,b)=>b[1]-a[1]),mx=rows.length?rows[0][1]:1;
+  const seg=(k,l)=>`<div class="seg">${l.map(([v,t])=>`<button data-${k}="${v}" class="${dv[k]===v?'on':''}">${t}</button>`).join('')}</div>`;
+  const body=dv.s==='bars'?rows.map(r=>`<div style="margin:10px 0"><div class="row" style="justify-content:space-between"><b>${esc(r[0])}</b><span><b>${r[1]}</b>${C[r[0]]?` <span class="er">−${C[r[0]]}</span>`:''}</span></div><div class="bar"><i style="width:${r[1]/mx*100}%"></i></div></div>`).join(''):
+   dv.s==='cards'?`<div class="grid">${rows.map(r=>`<div class="tile"><div class="mu">${esc(r[0])}</div><div class="big" style="font-size:28px">${r[1]}</div>${C[r[0]]?`<div class="er mu">cancelled ${C[r[0]]}</div>`:''}</div>`).join('')}</div>`:
+   `<table><tr><th>${dv.g.toUpperCase()}</th><th>Scanned</th><th>Cancelled</th><th>Net</th></tr>${rows.map(r=>`<tr><td>${esc(r[0])}</td><td>${r[1]}</td><td>${C[r[0]]||0}</td><td><b>${r[1]-(C[r[0]]||0)}</b></td></tr>`).join('')}</table>`;
+  V.innerHTML=`<div class="card"><label style="margin-top:0">Date</label><input type="date" id="dd" value="${dv.d}"></div>
+  <div class="grid"><div class="tile"><div class="mu">SCANNED</div><div class="big">${S.length}</div></div><div class="tile"><div class="mu">CANCELLED</div><div class="big er">${Rt.length}</div></div><div class="tile"><div class="mu">NET DISPATCH</div><div class="big ok">${S.length-Rt.length}</div></div><div class="tile"><div class="mu">MANIFESTS</div><div class="big">${Mn.length}</div></div></div>
+  <div class="card"><div class="mu">Group by</div>${seg('g',[['seller','Seller'],['courier','Courier'],['channel','Channel'],['user','User']])}<div class="mu" style="margin-top:8px">View style</div>${seg('s',[['bars','Bars'],['cards','Cards'],['table','Table']])}<div style="margin-top:10px">${rows.length?body:'<div class="mu">No data</div>'}</div></div>`;
+  $('#dd').onchange=e=>{dv.d=e.target.value||dayK();sub()};V.onclick=e=>{const t=e.target.dataset;if(t.g){dv.g=t.g;draw()}else if(t.s){dv.s=t.s;draw()}}};
+ const sub=()=>{if(unsub)unsub();let on=1,t;const q=x=>({seller:x[0],channel:x[1],courier:x[2],user:x[3]}),run=async()=>{if(!on)return;if(document.visibilityState!=='hidden'){try{const r=await gs('dash',dv.d);if(on){S=r.s.map(q);Rt=r.r.map(q);Mn=new Array(r.m);draw()}}catch(e){}}if(on)t=setTimeout(run,15000)};run();unsub=()=>{on=0;clearTimeout(t)}};
+ draw();sub()}
+
+// ---------- reports
+function rep(){const V=$('#v'),t=dayK();V.innerHTML=`<div class="card"><h3>Reports</h3><label>Period</label><select id="pd"><option value="c">Custom dates</option><option value="t">Today</option><option value="y">Yesterday</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="tm">This month</option><option value="lm">Last month</option></select><div class="row"><div><label>From</label><input type="date" id="f" value="${t}"></div><div><label>To</label><input type="date" id="t" value="${t}"></div></div>
+ <label>Report</label><select id="r"><option value="1">1. Manifest data (date wise)</option><option value="2">2. Actual dispatch (Scanned vs Cancelled)</option><option value="3">3. Cancel – date/seller/channel wise</option><option value="4">4. User wise (forward + cancel)</option><option value="5">5. Dispatch pending (Scanned − Cancelled &gt; 0)</option><option value="6" selected>6. DISPATCH REPORT – full AWB detail (download)</option><option value="7">7. Courier handover register</option></select>
+ <button style="width:100%;margin-top:10px" id="run">Show report</button></div><div id="out"></div>`;
+ $('#pd').onchange=e=>{const v=e.target.value,z=new Date();let a=z,b=z;if(v==='y')a=b=new Date(z-864e5);else if(v==='7')a=new Date(z-6*864e5);else if(v==='30')a=new Date(z-29*864e5);else if(v==='tm')a=new Date(z.getFullYear(),z.getMonth(),1);else if(v==='lm'){a=new Date(z.getFullYear(),z.getMonth()-1,1);b=new Date(z.getFullYear(),z.getMonth(),0)}if(v!=='c'){$('#f').value=dayK(a);$('#t').value=dayK(b)}};
+ $('#run').onclick=async()=>{const f=$('#f').value,t=$('#t').value,r=$('#r').value,q=[['day','>=',f],['day','<=',t]],o=$('#out');o.innerHTML='<div class="card mu">Loading…</div>';
+  const grp=(a,keys)=>{const m={};a.forEach(x=>{const k=keys.map(c=>x[c]).join('|');m[k]=m[k]||Object.fromEntries(keys.map(c=>[c,x[c]]));m[k].n=(m[k].n||0)+1});return Object.values(m)};
+  let rows=[],ms=[],P=[];
+  if(r==='1'||r==='7'){ms=await col('manifests',q);if(r==='7')ms=ms.filter(m=>m.hand);rows=ms.map(m=>({Manifest:m.id,Seller:m.seller,Channel:m.channel,Courier:m.courier,User:m.user,Created:m.createdStr,Closed:m.closedStr||'',Status:m.status,Packets:m.count,...(r==='7'?{Pickup_Person:m.hand.by,Vehicle:m.hand.veh,Handover_At:m.hand.at}:{})}))}
+  else if(r==='2'){const S=await col('scans',q),C=await col('returns',q),ds=[...new Set([...S,...C].map(x=>x.day))].sort();rows=ds.map(d=>{const a=S.filter(x=>x.day===d).length,b=C.filter(x=>x.day===d).length;return{Date:d,Scanned:a,Cancelled:b,Actual_Dispatch:a-b}})}
+  else if(r==='3'){rows=grp(await col('returns',q),['day','seller','channel']).map(x=>({Date:x.day,Seller:x.seller,Channel:x.channel,Cancelled:x.n}))}
+  else if(r==='4'){const S=await col('scans',q),C=await col('returns',q),us=[...new Set([...S,...C].map(x=>x.user))];rows=us.map(u=>({User:u,Forward_Scanned:S.filter(x=>x.user===u).length,Cancel_Scanned:C.filter(x=>x.user===u).length}))}
+  else if(r==='6'){const S=await col('scans',q),C=new Set((await col('returns',[['day','>=',f]])).map(x=>x.awb));rows=S.sort((a,b)=>a.ts.localeCompare(b.ts)).map(x=>({Date:x.day,Manifest:x.manifest,Seller:x.seller,Channel:x.channel,Courier:x.courier,AWB:x.awb,User:x.user,ScannedAt:x.tsStr,Status:C.has(x.awb)?'Cancelled':'Dispatched'}))}
+  else{const S=await col('scans',q),C=new Set((await col('returns',[['day','>=',f]])).map(x=>x.awb));P=S.filter(x=>!C.has(x.awb));
+   rows=grp(S,['manifest','seller','channel','courier']).map(x=>{const p=P.filter(y=>y.manifest===x.manifest).length;return{Manifest:x.manifest,Seller:x.seller,Channel:x.channel,Courier:x.courier,Scanned:x.n,Cancelled:x.n-p,Pending:p}}).filter(x=>x.Pending>0)}
+  if(!rows.length)return o.innerHTML='<div class="card mu">No data found.</div>';
+  const k=Object.keys(rows[0]),sh=rows.slice(0,300);o.innerHTML=`<div class="card"><div class="row" style="margin-bottom:8px"><button class="s" id="dl">⬇ CSV (${rows.length} rows)</button>${r==='1'?'<button class="s g" id="da">⬇ AWB detail CSV</button>':''}${r==='5'?'<button class="s g" id="da">⬇ Pending AWB list</button>':''}</div>${rows.length>300?'<div class="mu">Showing the first 300 rows on screen; the CSV has all data.</div>':''}<div class="tw"><table><tr>${k.map(c=>`<th>${c}</th>`).join('')}${r==='1'?'<th></th>':''}</tr>${sh.map((x,i)=>`<tr>${k.map(c=>`<td>${esc(x[c])}</td>`).join('')}${r==='1'?`<td><button class="s" data-p="${i}">PDF</button></td>`:''}</tr>`).join('')}</table></div></div>`;
+  $('#dl').onclick=()=>save(`report${r}_${f}_${t}.csv`,csv(rows));
+  if($('#da'))$('#da').onclick=async()=>{const D=r==='5'?P:await col('scans',q);save(`awb_detail_${f}_${t}.csv`,csv(D.map(x=>({Manifest:x.manifest,Seller:x.seller,Channel:x.channel,Courier:x.courier,AWB:x.awb,User:x.user,ScannedAt:x.tsStr}))))};
+  o.onclick=async e=>{const i=e.target.dataset.p;if(i===undefined)return;const m=ms[i],a=(await col('scans',[['manifest','==',m.id]])).sort((a,b)=>a.n-b.n);pdf(m,a,'F')}}}
+
+// ---------- admin
+function adm(){const V=$('#v'),L=(h,key)=>`<div class="card"><h3>${h}</h3><div>${cfg[key].map(x=>`<span class="chip">${esc(x)}<a data-d="${key}|${esc(x)}">✕</a></span>`).join('')||'<span class="mu">—</span>'}</div><div class="row" style="margin-top:6px"><input id="n_${key}" autocapitalize="characters"><button class="p" style="flex:0 0 96px" data-a="${key}">Add</button></div></div>`;
+ V.innerHTML=L('Sellers','sellers')+L('Channels','channels')+L('Couriers','couriers')+`<div class="card"><h3>Users</h3><div>${cfg.users.map(u=>`<span class="chip">${esc(u.id)} (${u.role})${u.id!==me.id?`<a data-u="${esc(u.id)}">✕</a>`:''}</span>`).join('')}</div><label>User ID</label><input id="nu" autocapitalize="none"><label>Password (new / change)</label><input id="np"><label>Role</label><select id="nr"><option>user</option><option>admin</option></select><button style="margin-top:8px" id="au">Add / update user</button></div>
+ <div class="card"><h3>💾 Backend data backup</h3><p class="mu">All scanned data is stored in the backend database. Download everything from here.</p><div class="row"><button class="s" data-b="json">Full backup (JSON)</button><button class="s g" data-b="scans">All Scans CSV</button></div><div class="row" style="margin-top:6px"><button class="s g" data-b="returns">All Cancels CSV</button><button class="s g" data-b="manifests">All Manifests CSV</button><button class="s g" data-b="audit">Audit log CSV</button></div></div>
+ <div class="card"><h3>Master data upload</h3><p class="mu">CSV columns: Seller, Channel, Courier. Existing entries are kept; new ones are added.</p><button class="s g" id="tp" style="margin-bottom:8px">⬇ Download template CSV</button><input type="file" id="fu" accept=".csv,.txt"><div id="um" class="mu" style="margin-top:6px"></div></div>
+ <div class="card"><h3>📁 Master file location</h3><p class="mu">All data is saved live in your Google Sheet:<br><b>Master</b> (Seller/Channel/Courier – also editable in the sheet), <b>Scans</b>, <b>Manifests</b>, <b>Returns</b>, <b>CancelManifests</b>, <b>Audit</b>, <b>Config</b><br><a href="https://docs.google.com/spreadsheets/d/1ITwmjxJ_RB0xMNuEodQwxQLec2-fEpWdGDL8e0AVFbc/edit" target="_blank">Open Google Sheet</a></p><button class="s" data-b="master">⬇ Download master file (CSV)</button></div>`;
+ V.onclick=async e=>{const t=e.target.dataset,a=t.a;
+  if(t.d){const[k,v]=t.d.split('|');cfg[k]=cfg[k].filter(x=>x!==v);await saveCfg();return adm()}
+  if(t.u){if(!await yn('Remove user '+esc(t.u)+'?','Remove'))return;cfg.users=cfg.users.filter(u=>u.id!==t.u);await saveCfg();return adm()}
+  if(t.b==='master'){const n=Math.max(...['sellers','channels','couriers'].map(k=>cfg[k].length)),rw=[];for(let i=0;i<n;i++)rw.push({Seller:cfg.sellers[i]||'',Channel:cfg.channels[i]||'',Courier:cfg.couriers[i]||''});return rw.length?save('master_file_'+dayK()+'.csv',csv(rw)):toast('No master data')}
+  if(t.b){const n=t.b;if(n==='json'){const o={exported:ist(),master:{sellers:cfg.sellers,channels:cfg.channels,couriers:cfg.couriers}};for(const c of['manifests','cmanifests','scans','returns','expected','audit'])o[c]=await col(c);return save('WMS_backup_'+dayK()+'.json',JSON.stringify(o))}
+   const d=await col(n);return d.length?save(n+'_all_'+dayK()+'.csv',csv(d)):toast('No data available')}
+  if(!a)return;const v=$('#n_'+a).value.trim().toUpperCase();if(v&&!cfg[a].includes(v)){cfg[a].push(v);await saveCfg();adm()}};
+ $('#au').onclick=async()=>{const id=$('#nu').value.trim(),pw=$('#np').value;if(!id||!pw)return toast('Enter ID and password');cfg.users=cfg.users.filter(u=>u.id!==id);cfg.users.push({id,ph:await sha(pw),role:$('#nr').value});await saveCfg();if(id===me.id)me=cfg.users.find(u=>u.id===id);adm()};
+ $('#tp').onclick=()=>save('master_template.csv','\ufeffSeller,Channel,Courier\nSELLER1,AMAZON,DELHIVERY\nSELLER2,FLIPKART,ECOM EXPRESS\n');
+ $('#fu').onchange=async e=>{const f=e.target.files[0];if(!f)return;const ls=(await f.text()).replace(/^\ufeff/,'').split(/\r?\n/).filter(l=>l.trim()).map(l=>l.split(/[,\t;]/).map(c=>c.replace(/^"|"$/g,'').trim().toUpperCase()));
+  const h=ls[0],ix=n=>h.indexOf(n);let si=ix('SELLER'),ci=ix('CHANNEL'),oi=ix('COURIER'),rows=ls;
+  if(si<0&&ci<0&&oi<0){si=0;ci=1;oi=2}else rows=ls.slice(1);
+  const n={sellers:0,channels:0,couriers:0};
+  rows.forEach(r=>[[si,'sellers'],[ci,'channels'],[oi,'couriers']].forEach(([i,k])=>{const v=i>=0&&r[i];if(v&&!cfg[k].includes(v)){cfg[k].push(v);n[k]++}}));
+  ['sellers','channels','couriers'].forEach(k=>cfg[k].sort());await saveCfg();log('master upload',JSON.stringify(n));toast(`Added: ${n.sellers} sellers, ${n.channels} channels, ${n.couriers} couriers`);adm()}}
+boot().catch(e=>{A.innerHTML='<main><div class="card er">Cannot connect to Google Sheet: '+esc(e.message)+'</div>'+(/fetch|network|json|unexpected/i.test(e.message)?'<div class="card mu">Cannot reach the backend. Check that the Apps Script web app is deployed with access <b>Anyone</b>, the latest Code.gs is deployed (New version) and WEBAPP_URL in this file is correct.</div>':'')+(/not a function/.test(e.message)?'<div class="card"><b>Backend (Code.gs) is not deployed correctly.</b><p class="mu">1) Apps Script → Code.gs: paste the latest Code.gs and Save.<br>2) Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy.<br>3) Open the web app URL followed by <b>?check=1</b>. It must show "api(): function" and "Sheet OK".</p></div>':'')+'</main>'});
+</script></body></html>
