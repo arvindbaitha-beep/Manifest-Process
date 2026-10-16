@@ -26,9 +26,11 @@ nav{position:fixed;top:66px;bottom:0;left:0;width:88px;display:flex;flex-directi
 .tw{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border-bottom:1px solid var(--bd);padding:5px 6px;text-align:left;white-space:nowrap}
 .hd{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--card);border-bottom:1px solid var(--bd)}
 .chip{display:inline-block;background:var(--bg);border:1px solid var(--bd);border-radius:12px;padding:2px 8px;margin:2px;font-size:12px}.chip a{color:var(--er);cursor:pointer;padding:0 3px}
+button,input,select{touch-action:manipulation}button:active{transform:scale(.97);filter:brightness(.88)}
+#bar{position:fixed;top:0;left:0;height:3px;width:100%;background:linear-gradient(90deg,transparent,var(--ac),transparent);animation:bm 1s linear infinite;display:none;z-index:30}@keyframes bm{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
 #toast{position:fixed;top:60px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:8px 14px;border-radius:8px;z-index:20;display:none}
 </style></head><body>
-<div id="toast"></div><div id="app"></div><div id="ovl"></div>
+<div id="bar"></div><div id="toast"></div><div id="app"></div><div id="ovl"></div>
 <script>
 const $=s=>document.querySelector(s),A=$('#app');
 const ist=(d=new Date())=>d.toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:true});
@@ -52,32 +54,38 @@ const crow=(m,arr,k)=>arr.map((x,i)=>({Serial:i+1,Manifest:m.id,Seller:x.seller,
 const SS={g:k=>{try{return sessionStorage.getItem(k)}catch(e){return null}},s:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},r:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
 // Backend address (your Apps Script web app). Used when this page is hosted outside Google, e.g. GitHub Pages.
 const WEBAPP_URL='https://script.google.com/macros/s/AKfycbzhMqIkDBu-Y-2LPhC3_I0WRhiVMETqMHbj6YgWLzwEUlOENbBAXlHsI1YGvAkwfH8a/exec';
-const gs=(op,...a)=>window.google&&google.script&&google.script.run
+const gs0=(op,...a)=>window.google&&google.script&&google.script.run
  ?new Promise((ok,no)=>google.script.run.withSuccessHandler(ok).withFailureHandler(e=>no(new Error(e&&e.message||e))).api(op,...JSON.parse(JSON.stringify(a))))
  :fetch(WEBAPP_URL,{method:'POST',body:JSON.stringify({args:[op,...a]})}).then(r=>r.json()).then(j=>{if(!j.ok)throw new Error(j.e);return j.r});
+let np=0;const BG=['saveScans','tail','add','setMany','awbs'],bar=d=>{np+=d;const e=document.getElementById('bar');if(e)e.style.display=np>0?'block':'none'};   // top progress bar for anything the user is waiting for
+const gs=(op,...a)=>{const f=!BG.includes(op)&&a[0]!=='_';if(f)bar(1);return gs0(op,...a).finally(()=>{if(f)bar(-1)})};
 function mkdb(){const D=(c,id)=>({get:async()=>{const r=await gs('get',c,id);return{exists:!!r,data:()=>r}},set:o=>gs('set',c,id,o),delete:()=>gs('del',c,id)});
  return{doc:p=>{const i=p.indexOf('/');return D(p.slice(0,i),p.slice(i+1))},collection:c=>{const w=[],q={where:(...a)=>{w.push(a);return q},get:async()=>({docs:(await gs('query',c,w)).map(x=>({data:()=>x}))}),doc:id=>D(c,id),onSnapshot:f=>{let on=1,t;const run=async()=>{try{const r=await q.get();on&&f(r)}catch(e){}if(on)t=setTimeout(run,8000)};run();return()=>{on=0;clearTimeout(t)}}};return q}}}
 // fast scanning: instant local checks, background batch sync to the Sheet
 let KN=new Map(),RT=new Map(),Q={F:[],R:[],M:[]},fl=false,again=false;
 const pend=()=>{const e=$('#pend');if(e){const n=Q.F.length+Q.R.length;e.textContent=n?'Syncing '+n+'…':'✔ All synced'}const e2=$('#sv');if(e2)e2.textContent=(Q.F.length+Q.R.length+Q.M.length)?'Saving to Google Sheet…':'✔ Saved to Google Sheet';};
-async function loadKN(k){const r=await gs('awbs','scans');KN=new Map(r.rows.map(x=>[x[0],x]));KN.n=r.total;if(k==='R'){const q=await gs('awbs','returns');RT=new Map(q.rows.map(x=>[x[0],x[1]]))}}
+async function loadKN(k){const r=await gs('awbs','scans');KN=mkKN(r.rows);KN.n=r.total;}
 async function flush(){if(fl){again=true;return}fl=true;try{for(const k of['F','R'])while(Q[k].length){const b=Q[k].splice(0,300);let r;try{r=await gs('saveScans',k,b)}catch(e){Q[k].unshift(...b);throw e}qsave();
- for(const d of r.dups||[]){const it=b.find(x=>x.awb===d.awb);if(it&&(it.manifest||it.cm)===d.manifest)continue;[...SESS,cur,rcur].forEach(x=>x&&x.list&&x.list.delete(d.awb));const m=k==='F'?cur:rcur;k==='F'?KN.set(d.awb,[d.awb,d.manifest,'','','','']):RT.set(d.awb,d.manifest);const c=$('#cnt');if(c&&m&&m.list)c.textContent=m.list.size;dupe(d.awb,'Rejected by server – already scanned in <b>'+esc(d.manifest)+'</b>.')}}while(Q.M.length){await gs('setMany',Q.M[0].c,Q.M[0].S,Q.M[0].E);Q.M.shift();qsave()}}catch(e){toast('Sync error, retrying: '+(e.message||e))}fl=false;pend();if(again){again=false;flush()}}
+ for(const d of r.dups||[]){const it=b.find(x=>x.awb===d.awb&&(x.seller||'')===(d.seller||''));if(it&&(it.manifest||it.cm)===d.manifest)continue;[...SESS,cur,rcur].forEach(x=>x&&x.list&&x.list.delete(d.awb));const m=k==='F'?cur:rcur;k==='F'?kAdd([d.awb,d.manifest,d.seller||'','','','']):RT.set((d.seller||'')+'|'+d.awb,d.manifest);const c=$('#cnt');if(c&&m&&m.list)c.textContent=m.list.size;dupe(d.awb,'Rejected by server – already scanned in <b>'+esc(d.manifest)+'</b>.')}}while(Q.M.length){await gs('setMany',Q.M[0].c,Q.M[0].S,Q.M[0].E);Q.M.shift();qsave()}}catch(e){toast('Sync error, retrying: '+(e.message||e))}fl=false;pend();if(again){again=false;flush()}}
 const drain=async()=>{for(let i=0;i<40&&(Q.F.length||Q.R.length||Q.M.length||fl);i++){await flush();await new Promise(r=>setTimeout(r,250))}if(Q.F.length||Q.R.length||Q.M.length){toast('Sync pending – check connection and try again');return false}return true};
 setInterval(flush,2000);
-const CLOSED=new Set(),qsave=()=>{try{localStorage.setItem('wms_q',JSON.stringify(Q))}catch(e){}};
+const CLOSED=new Set(),HELD={},DC={},qsave=()=>{try{localStorage.setItem('wms_q',JSON.stringify(Q))}catch(e){}};
 try{const q=JSON.parse(localStorage.getItem('wms_q'));if(q){Q.F=q.F||[];Q.R=q.R||[];Q.M=q.M||[]}}catch(e){}   // unsent scans survive a reload / lost connection
 async function init(k,m){const nw=m.new,wk=!KNl[k]&&!KNp[k];if(!nw&&m.list&&!wk)return;if(wk)KNp[k]=1;
  const p=gs('scanInit',k,m.id,nw?mt(m):null,wk).then(r=>{if(!m.list)m.list=new Map(r.mine.sort((a,b)=>a.n-b.n).map(x=>[x.awb,x]));
-  if(wk){const L=KN;KN=new Map(r.rows.map(x=>[x[0],x]));KN.n=r.total;L.forEach((v,a)=>{if(!KN.has(a))KN.set(a,v)});if(k==='R')RT=new Map(r.rt);KNl[k]=1;KNp[k]=0}
+  if(wk){const L=KN;KN=mkKN(r.rows);KN.n=r.total;L.forEach(l=>l.forEach(x=>kAdd(x)));if(k==='R')RT=new Map(r.rt.map(x=>[x[2]+'|'+x[0],x[1]]));KNl[k]=1;KNp[k]=0}
   if(nw){delete m.new;log('create',m.id)}}).catch(e=>{KNp[k]=0;throw e});
- if(nw&&k==='F'){m.list=new Map();p.catch(e=>toast('Sync error: '+(e.message||e)));return}   // new dispatch manifest: start scanning at once
+ if(nw&&(k==='F'||KNl.R)){if(!m.list)m.list=new Map();p.catch(e=>toast('Sync error: '+(e.message||e)));return}   // new dispatch manifest: start scanning at once
  await p}
-function preload(){if(KNl.F||KNp.F)return;KNp.F=1;gs('awbs','scans').then(r=>{const L=KN;KN=new Map(r.rows.map(x=>[x[0],x]));KN.n=r.total;L.forEach((v,a)=>{if(!KN.has(a))KN.set(a,v)});KNl.F=1;KNp.F=0}).catch(()=>{KNp.F=0})}
+function preload(){if(KNl.F||KNp.F)return;KNp.F=1;   // load duplicate-check + cancel data in the background right after login
+ Promise.all([gs('awbs','scans'),gs('awbs','returns').catch(()=>null)]).then(([r,q])=>{const L=KN;KN=mkKN(r.rows);KN.n=r.total;L.forEach(l=>l.forEach(x=>kAdd(x)));KNl.F=1;
+  if(q){const O=RT;RT=new Map(q.rows.map(x=>[x[2]+'|'+x[0],x[1]]));O.forEach((v,a)=>RT.set(a,v));KNl.R=1}KNp.F=0}).catch(()=>{KNp.F=0})}
 
 let SESS=[],cfg0;
 let KNl={F:0,R:0},KNp={};
 const MINLEN=6,AUTO_MS=120;   // auto-submit: AWB with at least MINLEN characters, AUTO_MS after the last scanner character
+const kAdd=(x,M)=>{M=M||KN;const l=M.get(x[0]);if(!l)M.set(x[0],[x]);else if(!l.some(e=>e[2]===x[2]))l.push(x)};   // AWB -> one entry per seller
+const mkKN=rows=>{const M=new Map();rows.forEach(x=>kAdd(x,M));return M};
 const mt=x=>{const{list,new:_n,...r}=x;return r};
 const snap=()=>JSON.stringify({s:cfg.sellers,c:cfg.channels,o:cfg.couriers,u:cfg.users});
 async function saveCfg(){const o=JSON.parse(cfg0),P={add:{},rem:{},uset:[],udel:[]};  // send only the changes; server merges atomically
@@ -87,8 +95,9 @@ async function saveCfg(){const o=JSON.parse(cfg0),P={add:{},rem:{},uset:[],udel:
 async function mkM(k,s,c,o){const n=new Date(),id=(k==='F'?`${sf(s)}-${sf(c)}-${sf(o)}-`:'CNL-')+dayK(n).replace(/-/g,'').slice(2)+'-'+n.toLocaleTimeString('en-GB',{timeZone:'Asia/Kolkata'}).replace(/:/g,'').slice(0,6)+Math.floor(Math.random()*90+10);
  const m={id,seller:s||'',channel:c||'',courier:o||'',user:me.id,created:n.toISOString(),createdStr:ist(n),day:dayK(n),status:'open',count:0};
  m.new=1;return m}
-let syn=0;async function syncKN(){if(KN.n===undefined||fl||syn)return;syn=1;try{const r=await gs('tail','scans',KN.n);if(r.reset)await loadKN('F');else{r.rows.forEach(x=>{if(!KN.has(x[0]))KN.set(x[0],x)});KN.n=r.total}}catch(e){}syn=0}
+let syn=0;async function syncKN(){if(KN.n===undefined||fl||syn)return;syn=1;try{const r=await gs('tail','scans',KN.n);if(r.reset)await loadKN('F');else{r.rows.forEach(x=>kAdd(x));KN.n=r.total}}catch(e){}syn=0}
 setInterval(()=>{if($('#sc')&&document.visibilityState!=='hidden')syncKN()},8000);
+setInterval(()=>{if(document.visibilityState!=='hidden')gs('get','_').catch(()=>{})},150000);   // keeps the Google backend awake
 async function boot(){
  db=mkdb();A.innerHTML='<main><div class="card mu">Connecting to Google Sheet…</div></main>';
  let cc=null;try{cc=JSON.parse(localStorage.getItem('wms_cfg'))}catch(e){}
@@ -118,8 +127,10 @@ async function scanV(k){const m=k==='F'?cur:rcur,V=$('#v');if(m)return scanning(
  ${k==='F'?`<label>Seller</label><select id="s">${opts(cfg.sellers)}</select><label>Channel</label><select id="c">${opts(cfg.channels)}</select><label>Courier</label><select id="o">${opts(cfg.couriers)}</select>`:'<p class="mu">Seller, channel and courier are matched automatically from the dispatch scan.</p>'}
  <button style="width:100%;margin-top:12px" id="go">Submit – Create Manifest</button></div>
  <div id="opn"></div>`;
- col(cn,[['user','==',me.id],['status','==','open']]).then(r=>{r=r.filter(o=>!CLOSED.has(o.id));open=r;if(r.length&&$('#opn'))$('#opn').innerHTML=`<div class="card"><h3>Open manifests (resume)</h3>${r.map(o=>`<div class="row" style="margin:4px 0"><span>${esc(o.id)}</span><button class="s g" data-r="${esc(o.id)}">Resume</button></div>`).join('')}</div>`});
- V.onclick=e=>{const r=e.target.dataset.r;if(r){const o=open.find(x=>x.id===r);if(k==='F'){cur=o;SESS=[o]}else rcur=o;scanning(k)}};
+ const showO=r=>{open=r;if($('#opn'))$('#opn').innerHTML=r.length?`<div class="card"><h3>Open manifests (resume)</h3>${r.map(o=>`<div class="row" style="margin:4px 0"><span>${esc(o.id)}</span><button class="s g" data-r="${esc(o.id)}">Resume</button></div>`).join('')}</div>`:''},
+  held=()=>Object.values(HELD).filter(o=>o.user===me.id&&(k==='F')===!!o.seller&&!CLOSED.has(o.id));
+ showO(held());col(cn,[['user','==',me.id],['status','==','open']]).then(r=>showO([...held(),...r.filter(o=>!CLOSED.has(o.id)&&!HELD[o.id])]));
+ V.onclick=e=>{const r=e.target.dataset.r;if(r){const o=HELD[r]||open.find(x=>x.id===r);if(k==='F'){cur=o;SESS=[o]}else rcur=o;scanning(k)}};
  if(k==='F'){const add=(id,key)=>{if($(id))$(id).onclick=async()=>{const v=await ask('New '+key);if(v&&v.trim()&&!cfg[key+'s'].includes(v.trim().toUpperCase())){cfg[key+'s'].push(v.trim().toUpperCase());await saveCfg();scanV(k)}}};add('#as','seller');add('#ac','channel');add('#ao','courier')}
  $('#go').onclick=async()=>{let s,c,o;
   if(k==='F'){s=$('#s').value;c=$('#c').value;o=$('#o').value;if(!s||!c||!o)return toast('Please select Seller, Channel and Courier')}
@@ -136,7 +147,7 @@ async function scanning(k){const m=k==='F'?cur:rcur,V=$('#v'),sn=k==='F'?'scans'
  const inp=$('#sc'),show=()=>{$('#cnt').textContent=m.list.size;$('#rec').innerHTML=[...m.list.values()].slice(-8).reverse().map(x=>`<div class="mu">${x.n}. ${esc(x.awb)} · ${esc(x.seller)}/${esc(x.channel)}/${esc(x.courier)} <a class="er" data-x="${esc(x.awb)}" style="padding:4px 8px">✕</a></div>`).join('')};show();
  const fb=()=>{if(!$('#ovl').innerHTML)inp.focus()};inp.onblur=()=>setTimeout(fb,80);
  $('#rec').onclick=async e=>{const a=e.target.dataset.x;if(!a)return;if(!await yn('Remove '+esc(a)+'?','Remove'))return fb();
-  Q.F=Q.F.filter(i=>i.awb!==a);Q.R=Q.R.filter(i=>i.awb!==a);qsave();if(!await drain())return;await db.doc(sn+'/'+a).delete();m.list.delete(a);if(k==='F')KN.delete(a);else RT.delete(a);log('void '+sn,a+' @ '+m.id);show();fb()};
+  Q.F=Q.F.filter(i=>i.awb!==a);Q.R=Q.R.filter(i=>i.awb!==a);qsave();if(!await drain())return;const sl_=(m.list.get(a)||{}).seller||'';await gs('delScan',sn,a,sl_);m.list.delete(a);if(k==='F'){const l=KN.get(a);if(l){const g=l.filter(e=>e[2]!==sl_);g.length?KN.set(a,g):KN.delete(a)}}else RT.delete(sl_+'|'+a);log('void '+sn,a+' @ '+m.id);show();fb()};
  let busy=false;
  let tm;const go=async()=>{clearTimeout(tm);const awb=inp.value.trim().toUpperCase().replace(/[\/\s]/g,'');if(!awb)return;if(busy){tm=setTimeout(go,200);return}inp.value='';busy=true;
   try{await one(k,m,awb);show()}catch(er){await dupe(awb,'Save error: '+(er.message||er.code)+'. Please scan again.')}busy=false;fb()};
@@ -148,22 +159,24 @@ async function scanning(k){const m=k==='F'?cur:rcur,V=$('#v'),sn=k==='F'?'scans'
   let t=SESS.find(x=>x.seller===v[0]&&x.channel===v[1]&&x.courier===v[2]);
   if(!t){t=(await col('manifests',[['user','==',me.id],['status','==','open']])).find(x=>x.seller===v[0]&&x.channel===v[1]&&x.courier===v[2])||await mkM('F',v[0],v[1],v[2]);SESS.push(t)}
   cur=t;scanning('F')};
- $('#hold').onclick=async()=>{if(!await drain())return;await gs('setMany',cn.slice(0,-1),(k==='F'?SESS:[m]).map(x=>{x.count=x.list?x.list.size:x.count;return mt(x)}));if(k==='F'){cur=null;SESS=[]}else rcur=null;scanV(k)};
+ $('#hold').onclick=async()=>{const H=k==='F'?SESS:[m];H.forEach(x=>{x.count=x.list?x.list.size:x.count;HELD[x.id]=x});Q.M.push({c:cn.slice(0,-1),S:H.map(x=>mt(x)),E:[]});qsave();flush();if(k==='F'){cur=null;SESS=[]}else rcur=null;scanV(k)};
  $('#sub').onclick=async()=>{const A=k==='F'?SESS:[m],L=A.filter(x=>x.list&&x.list.size);if(!L.length)return toast('No AWB scanned yet');
   if(!await modal(`<h3>Close ${L.length>1?L.length+' manifests':'manifest'}?</h3><p>${L.map(x=>(x.seller?esc(x.seller)+' / '+esc(x.courier):'Cancelled')+': <b>'+x.list.size+'</b> AWB').join('<br>')}</p><p class="mu">A separate manifest &amp; PDF is created for each. Once closed it cannot be edited (only an admin can reopen it).</p><div class="row"><button class="g" data-v="no">Back</button><button data-v="ok">Close</button></div>`))return fb();
   const n=new Date(),R=[],S=[],E=[];for(const x of A){if(!x.list.size){E.push(x.id);continue}Object.assign(x,{status:'closed',count:x.list.size,closed:n.toISOString(),closedStr:ist(n)});S.push(mt(x));R.push({m:mt(x),arr:[...x.list.values()]})}
-  Q.M.push({c:cn.slice(0,-1),S,E});qsave();S.forEach(x=>{CLOSED.add(x.id);log('close',x.id+' ('+x.count+')')});flush()
+  Q.M.push({c:cn.slice(0,-1),S,E});qsave();S.forEach(x=>{CLOSED.add(x.id);delete HELD[x.id];log('close',x.id+' ('+x.count+')')});flush()
   if(k==='F'){cur=null;SESS=[]}else rcur=null;done(k,R);pend()}}
 
 async function one(k,m,awb){const L=$('#last'),nx=Math.max(0,...[...m.list.values()].map(x=>x.n))+1;
  if(m.list.has(awb))return void await dupe(awb,'This AWB is already scanned in this manifest.');
  const b=()=>({awb,n:nx,user:me.id,ts:new Date().toISOString(),tsStr:ist(),day:dayK()});
  if(k==='F'){if(m.list.size>=MAX)return void await dupe(awb,'Limit of '+MAX+' AWB reached. Please close the manifest.');
-  const d=KN.get(awb);if(d)return void await dupe(awb,`Already scanned in manifest <b>${esc(d[1])}</b> by ${esc(d[5])}.`);
-  const x={...b(),manifest:m.id,seller:m.seller,channel:m.channel,courier:m.courier};m.list.set(awb,x);KN.set(awb,[awb,m.id,m.seller,m.channel,m.courier,me.id]);Q.F.push(x);qsave();
+  const d=(KN.get(awb)||[]).find(e=>e[2]===m.seller);if(d)return void await dupe(awb,`Already scanned for seller <b>${esc(m.seller)}</b> in manifest <b>${esc(d[1])}</b> by ${esc(d[5])}.`);
+  const x={...b(),manifest:m.id,seller:m.seller,channel:m.channel,courier:m.courier};m.list.set(awb,x);kAdd([awb,m.id,m.seller,m.channel,m.courier,me.id]);Q.F.push(x);qsave();
   L.innerHTML=`<b class="ok">✔ ${esc(awb)}</b><div class="mu">#${x.n}</div>`}
- else{const f=KN.get(awb);if(!f)return void await dupe(awb,'This AWB was not found in the dispatch scans.');if(RT.has(awb))return void await dupe(awb,`Already cancelled in ${esc(RT.get(awb))}.`);
-  const x={...b(),cm:m.id,fm:f[1],seller:f[2],channel:f[3],courier:f[4]};m.list.set(awb,x);RT.set(awb,m.id);Q.R.push(x);qsave();
+ else{const fa=KN.get(awb)||[];if(!fa.length)return void await dupe(awb,'This AWB was not found in the dispatch scans.');let f=fa[0];
+  if(fa.length>1){const v=await modal(`<h3>This AWB exists for several sellers</h3><p><b>${esc(awb)}</b> – choose the seller to cancel:</p><select>${fa.map(e=>`<option>${esc(e[2])}</option>`).join('')}</select><div class="row" style="margin-top:10px"><button class="g" data-v="no">Cancel</button><button data-v="ok">Select</button></div>`);if(!v)return;f=fa.find(e=>e[2]===v[0])||fa[0]}
+  const rk=f[2]+'|'+awb;if(RT.has(rk))return void await dupe(awb,`Already cancelled in ${esc(RT.get(rk))}.`);
+  const x={...b(),cm:m.id,fm:f[1],seller:f[2],channel:f[3],courier:f[4]};m.list.set(awb,x);RT.set(rk,m.id);Q.R.push(x);qsave();
   L.innerHTML=`<b class="ok">✔ MATCHED ${esc(awb)}</b><div>${esc(f[2])} / ${esc(f[3])} / ${esc(f[4])}</div><div class="mu">Not picked against: ${esc(f[1])}</div>`}
  pend()}
 
@@ -196,10 +209,9 @@ function mf(){const V=$('#v'),t=dayK();let ms=[];
  <div class="card"><h3>Manifest History (download anytime)</h3><div class="row"><div><label>From</label><input type="date" id="f" value="${t}"></div><div><label>To</label><input type="date" id="t" value="${t}"></div></div>
  <div class="row"><div><label>Type</label><select id="ty"><option value="manifests">Dispatch</option><option value="cmanifests">Cancel/Return</option></select></div><div><label>Status</label><select id="st"><option value="">All</option><option>open</option><option>closed</option><option>handed</option></select></div></div>
  <button style="width:100%;margin-top:10px" id="go">Search</button></div><div id="out"></div>`;
- $('#qb').onclick=async()=>{const a=$('#qa').value.trim().toUpperCase().replace(/[\/\s]/g,''),o=$('#qo');if(!a)return;
-  const[s,r]=await Promise.all([db.doc('scans/'+a).get(),db.doc('returns/'+a).get()]);if(!s.exists)return o.innerHTML='<span class="er">No scan found for this AWB.</span>';
-  const d=s.data(),c=r.exists?r.data():null,mm=await db.doc('manifests/'+d.manifest).get(),md=mm.exists?mm.data():{};
-  o.innerHTML=`<b>${esc(a)}</b><br>${esc(d.seller)} / ${esc(d.channel)} / ${esc(d.courier)}<br>Manifest: ${esc(d.manifest)} (${esc(md.status||'')}) · ${esc(d.tsStr)} · ${esc(d.user)}<br>${c?`<span class="er">CANCELLED in ${esc(c.cm)} · ${esc(c.tsStr)}</span>`:'<span class="ok">Dispatched</span>'}${md.hand?`<br>Handover: ${esc(md.hand.by)} ${esc(md.hand.veh)} · ${esc(md.hand.at)}`:''}`};
+ $('#qb').onclick=async()=>{const a=$('#qa').value.trim().toUpperCase().replace(/[\/\s]/g,''),o=$('#qo');if(!a)return;o.textContent='Searching…';
+  const r=await gs('findAwb',a);if(!r.s.length)return o.innerHTML='<span class="er">No scan found for this AWB.</span>';
+  o.innerHTML=r.s.map(d=>{const c=r.r.find(x=>x.seller===d.seller),md=d.mf||{};return `<div style="border-top:1px solid var(--bd);padding:6px 0"><b>${esc(a)}</b><br>${esc(d.seller)} / ${esc(d.channel)} / ${esc(d.courier)}<br>Manifest: ${esc(d.manifest)} (${esc(md.status||'')}) · ${esc(d.tsStr)} · ${esc(d.user)}<br>${c?`<span class="er">CANCELLED in ${esc(c.cm)} · ${esc(c.tsStr)}</span>`:'<span class="ok">Dispatched</span>'}${md.hand?`<br>Handover: ${esc(md.hand.by)} ${esc(md.hand.veh)} · ${esc(md.hand.at)}`:''}</div>`}).join('')};
  $('#go').onclick=async()=>{const cn=$('#ty').value,F=cn==='manifests',st=$('#st').value,o=$('#out');o.innerHTML='<div class="card mu">Loading…</div>';
   ms=(await col(cn,[['day','>=',$('#f').value],['day','<=',$('#t').value]])).filter(m=>!st||m.status===st).sort((a,b)=>b.created.localeCompare(a.created));
   o.innerHTML=ms.length?`<div class="card"><div class="tw"><table><tr><th>Manifest</th><th>Seller</th><th>Courier</th><th>Pkts</th><th>Status</th><th></th></tr>${ms.map((m,i)=>`<tr><td>${esc(m.id)}<div class="mu">${esc(m.createdStr)}</div></td><td>${esc(m.seller)}</td><td>${esc(m.courier)}</td><td>${m.count||0}</td><td>${esc(m.status)}${m.hand?'<div class="mu">'+esc(m.hand.by)+'</div>':''}</td><td><button class="s" data-a="p" data-i="${i}">PDF</button> <button class="s g" data-a="c" data-i="${i}">CSV</button>${F&&m.status==='closed'?` <button class="s" data-a="h" data-i="${i}">Handover</button>`:''}${me.role==='admin'&&m.status!=='open'?` <button class="s r" data-a="o" data-i="${i}">Reopen</button>`:''}</td></tr>`).join('')}</table></div></div>`:'<div class="card mu">No manifests found.</div>';
@@ -212,8 +224,8 @@ function mf(){const V=$('#v'),t=dayK();let ms=[];
 
 // ---------- dashboard
 let dv={g:'seller',s:'bars',d:null};
-function dash(){const V=$('#v');dv.d=dv.d||dayK();let S=[],Rt=[],Mn=[];
- const draw=()=>{const cnt=(a)=>{const o={};a.forEach(x=>o[x[dv.g]]=(o[x[dv.g]]||0)+1);return o},o=cnt(S),C=cnt(Rt),rows=Object.entries(o).sort((a,b)=>b[1]-a[1]),mx=rows.length?rows[0][1]:1;
+function dash(){const V=$('#v');dv.d=dv.d||dayK();let S=[],Rt=[],Mn=[],ld=0;const c0=DC[dv.d];if(c0){[S,Rt,Mn]=c0;ld=1}
+ const draw=()=>{if(!ld){V.innerHTML='<div class="card mu">Loading dashboard…</div>';return}const cnt=(a)=>{const o={};a.forEach(x=>o[x[dv.g]]=(o[x[dv.g]]||0)+1);return o},o=cnt(S),C=cnt(Rt),rows=Object.entries(o).sort((a,b)=>b[1]-a[1]),mx=rows.length?rows[0][1]:1;
   const seg=(k,l)=>`<div class="seg">${l.map(([v,t])=>`<button data-${k}="${v}" class="${dv[k]===v?'on':''}">${t}</button>`).join('')}</div>`;
   const body=dv.s==='bars'?rows.map(r=>`<div style="margin:10px 0"><div class="row" style="justify-content:space-between"><b>${esc(r[0])}</b><span><b>${r[1]}</b>${C[r[0]]?` <span class="er">−${C[r[0]]}</span>`:''}</span></div><div class="bar"><i style="width:${r[1]/mx*100}%"></i></div></div>`).join(''):
    dv.s==='cards'?`<div class="grid">${rows.map(r=>`<div class="tile"><div class="mu">${esc(r[0])}</div><div class="big" style="font-size:28px">${r[1]}</div>${C[r[0]]?`<div class="er mu">cancelled ${C[r[0]]}</div>`:''}</div>`).join('')}</div>`:
@@ -221,8 +233,8 @@ function dash(){const V=$('#v');dv.d=dv.d||dayK();let S=[],Rt=[],Mn=[];
   V.innerHTML=`<div class="card"><label style="margin-top:0">Date</label><input type="date" id="dd" value="${dv.d}"></div>
   <div class="grid"><div class="tile"><div class="mu">SCANNED</div><div class="big">${S.length}</div></div><div class="tile"><div class="mu">CANCELLED</div><div class="big er">${Rt.length}</div></div><div class="tile"><div class="mu">NET DISPATCH</div><div class="big ok">${S.length-Rt.length}</div></div><div class="tile"><div class="mu">MANIFESTS</div><div class="big">${Mn.length}</div></div></div>
   <div class="card"><div class="mu">Group by</div>${seg('g',[['seller','Seller'],['courier','Courier'],['channel','Channel'],['user','User']])}<div class="mu" style="margin-top:8px">View style</div>${seg('s',[['bars','Bars'],['cards','Cards'],['table','Table']])}<div style="margin-top:10px">${rows.length?body:'<div class="mu">No data</div>'}</div></div>`;
-  $('#dd').onchange=e=>{dv.d=e.target.value||dayK();sub()};V.onclick=e=>{const t=e.target.dataset;if(t.g){dv.g=t.g;draw()}else if(t.s){dv.s=t.s;draw()}}};
- const sub=()=>{if(unsub)unsub();let on=1,t;const q=x=>({seller:x[0],channel:x[1],courier:x[2],user:x[3]}),run=async()=>{if(!on)return;if(document.visibilityState!=='hidden'){try{const r=await gs('dash',dv.d);if(on){S=r.s.map(q);Rt=r.r.map(q);Mn=new Array(r.m);draw()}}catch(e){}}if(on)t=setTimeout(run,15000)};run();unsub=()=>{on=0;clearTimeout(t)}};
+  $('#dd').onchange=e=>{dv.d=e.target.value||dayK();const c=DC[dv.d];ld=!!c;[S,Rt,Mn]=c||[[],[],[]];draw();sub()};V.onclick=e=>{const t=e.target.dataset;if(t.g){dv.g=t.g;draw()}else if(t.s){dv.s=t.s;draw()}}};
+ const sub=()=>{if(unsub)unsub();let on=1,t;const q=x=>({seller:x[0],channel:x[1],courier:x[2],user:x[3]}),run=async()=>{if(!on)return;if(document.visibilityState!=='hidden'){try{const r=await gs('dash',dv.d);if(on){S=r.s.map(q);Rt=r.r.map(q);Mn=new Array(r.m);ld=1;DC[dv.d]=[S,Rt,Mn];draw()}}catch(e){}}if(on)t=setTimeout(run,15000)};run();unsub=()=>{on=0;clearTimeout(t)}};
  draw();sub()}
 
 // ---------- reports
@@ -237,8 +249,8 @@ function rep(){const V=$('#v'),t=dayK();V.innerHTML=`<div class="card"><h3>Repor
   else if(r==='2'){const S=await col('scans',q),C=await col('returns',q),ds=[...new Set([...S,...C].map(x=>x.day))].sort();rows=ds.map(d=>{const a=S.filter(x=>x.day===d).length,b=C.filter(x=>x.day===d).length;return{Date:d,Scanned:a,Cancelled:b,Actual_Dispatch:a-b}})}
   else if(r==='3'){rows=grp(await col('returns',q),['day','seller','channel']).map(x=>({Date:x.day,Seller:x.seller,Channel:x.channel,Cancelled:x.n}))}
   else if(r==='4'){const S=await col('scans',q),C=await col('returns',q),us=[...new Set([...S,...C].map(x=>x.user))];rows=us.map(u=>({User:u,Forward_Scanned:S.filter(x=>x.user===u).length,Cancel_Scanned:C.filter(x=>x.user===u).length}))}
-  else if(r==='6'){const S=await col('scans',q),C=new Set((await col('returns',[['day','>=',f]])).map(x=>x.awb));rows=S.sort((a,b)=>a.ts.localeCompare(b.ts)).map(x=>({Date:x.day,Manifest:x.manifest,Seller:x.seller,Channel:x.channel,Courier:x.courier,AWB:x.awb,User:x.user,ScannedAt:x.tsStr,Status:C.has(x.awb)?'Cancelled':'Dispatched'}))}
-  else{const S=await col('scans',q),C=new Set((await col('returns',[['day','>=',f]])).map(x=>x.awb));P=S.filter(x=>!C.has(x.awb));
+  else if(r==='6'){const S=await col('scans',q),C=new Set((await col('returns',[['day','>=',f]])).map(x=>x.seller+'|'+x.awb));rows=S.sort((a,b)=>a.ts.localeCompare(b.ts)).map(x=>({Date:x.day,Manifest:x.manifest,Seller:x.seller,Channel:x.channel,Courier:x.courier,AWB:x.awb,User:x.user,ScannedAt:x.tsStr,Status:C.has(x.seller+'|'+x.awb)?'Cancelled':'Dispatched'}))}
+  else{const S=await col('scans',q),C=new Set((await col('returns',[['day','>=',f]])).map(x=>x.seller+'|'+x.awb));P=S.filter(x=>!C.has(x.seller+'|'+x.awb));
    rows=grp(S,['manifest','seller','channel','courier']).map(x=>{const p=P.filter(y=>y.manifest===x.manifest).length;return{Manifest:x.manifest,Seller:x.seller,Channel:x.channel,Courier:x.courier,Scanned:x.n,Cancelled:x.n-p,Pending:p}}).filter(x=>x.Pending>0)}
   if(!rows.length)return o.innerHTML='<div class="card mu">No data found.</div>';
   const k=Object.keys(rows[0]),sh=rows.slice(0,300);o.innerHTML=`<div class="card"><div class="row" style="margin-bottom:8px"><button class="s" id="dl">⬇ CSV (${rows.length} rows)</button>${r==='1'?'<button class="s g" id="da">⬇ AWB detail CSV</button>':''}${r==='5'?'<button class="s g" id="da">⬇ Pending AWB list</button>':''}</div>${rows.length>300?'<div class="mu">Showing the first 300 rows on screen; the CSV has all data.</div>':''}<div class="tw"><table><tr>${k.map(c=>`<th>${c}</th>`).join('')}${r==='1'?'<th></th>':''}</tr>${sh.map((x,i)=>`<tr>${k.map(c=>`<td>${esc(x[c])}</td>`).join('')}${r==='1'?`<td><button class="s" data-p="${i}">PDF</button></td>`:''}</tr>`).join('')}</table></div></div>`;
