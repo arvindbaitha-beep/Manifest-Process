@@ -84,7 +84,7 @@ function preload(){if(KNl.F||KNp.F)return;KNp.F=1;   // load duplicate-check + c
 
 let SESS=[],cfg0;
 let KNl={F:0,R:0},KNp={};
-const MINLEN=6,AUTO_MS=120;   // auto-submit: AWB with at least MINLEN characters, AUTO_MS after the last scanner character
+const MINLEN=1,AUTO_MS=450;   // auto-submit after the scanner has been quiet for 450 ms; Enter submits immediately
 const kAdd=(x,M)=>{M=M||KN;const l=M.get(x[0]);if(!l)M.set(x[0],[x]);else if(!l.some(e=>e[2]===x[2]))l.push(x)};   // AWB -> one entry per seller
 const mkKN=rows=>{const M=new Map();rows.forEach(x=>kAdd(x,M));return M};
 const mt=x=>{const{list,new:_n,...r}=x;return r};
@@ -124,7 +124,7 @@ function chooseMode(){
  <div class="mu" style="margin-top:12px">Tracking IDs are converted to uppercase. IDs longer than 25 characters will be rejected.</div>
  <div class="mu" style="margin-top:6px">For QR-code blocking, configure the scanner/HHT to enable barcode symbologies only and disable QR Code. Keyboard-wedge scanning does not reliably identify whether input came from a QR code or a barcode.</div>
  <button class="s g" id="modeLogout" style="margin-top:12px">Logout</button></div></main>`;
- $('#directMode').onclick=()=>{scanMode='direct';uploadedTask=null;tab='scan';home()};
+ $('#directMode').onclick=()=>{scanMode='direct';uploadedTask=null;cur=rcur=null;SESS=[];tab='scan';home()};
  $('#taskMode').onclick=()=>{$('#taskUpload').hidden=false};
  $('#taskTemplate').onclick=()=>save('tracking_task_template.csv','\ufeffTracking ID,Seller,Channel,Courier\nAB123456789,SELLER1,AMAZON,DELHIVERY\nCD987654321,SELLER2,FLIPKART,ECOM EXPRESS\n');
  $('#taskFile').onchange=async e=>{uploadedTask=null;$('#startTask').disabled=true;$('#taskInfo').textContent='Reading file…';try{
@@ -149,7 +149,7 @@ function chooseMode(){
   if(!list.length)throw new Error('No valid task rows found.');
   uploadedTask=list;try{localStorage.setItem('wms_uploaded_task',JSON.stringify(list));localStorage.setItem('wms_task_scanned','[]')}catch(e){}taskScanned=new Set();$('#taskInfo').textContent='Validated: '+list.length+' unique Tracking IDs. Task is ready.';$('#startTask').disabled=false;
  }catch(err){$('#taskInfo').textContent='Upload error: '+(err.message||err);toast('Task file validation failed') }};
- $('#startTask').onclick=()=>{if(!uploadedTask||!uploadedTask.length)return toast('Upload and validate a task first');scanMode='task';tab='scan';home()};
+ $('#startTask').onclick=()=>{if(!uploadedTask||!uploadedTask.length)return toast('Upload and validate a task first');scanMode='task';cur=rcur=null;SESS=[];tab='scan';home()};
  $('#modeLogout').onclick=()=>{SS.r('u');me=null;uploadedTask=null;taskScanned.clear();login()};
 }
 function parseCSVTask(text){
@@ -210,7 +210,7 @@ async function scanning(k){const m=k==='F'?cur:rcur,V=$('#v'),sn=k==='F'?'scans'
  try{await init(k,m)}catch(e){toast('Load failed: '+(e.message||e));V.innerHTML='<div class="card er">Load failed. Please try again.</div>';return}
  V.innerHTML=`<div class="card"><div class="mu">${k==='F'?'OUTWARD DISPATCH':'CANCELLED'} MANIFEST</div><b>${esc(m.id)}</b><div class="mu">${esc(m.createdStr)}${k==='F'?' · '+esc(m.seller)+' / '+esc(m.channel)+' / '+esc(m.courier)+(SESS.length>1?' · session: '+SESS.length+' manifests':''):''}</div>
  <div class="big" id="cnt">0</div><div class="mu" style="text-align:center">scanned ${k==='F'?'/ '+MAX:''} · saved to Google Sheet</div><div class="mu" id="pend" style="text-align:center"></div>
- ${k==='F'?'<button class="s" id="sw" style="width:100%;margin-top:8px">⇄ Switch Seller / Courier</button>':''}<label>Scan Tracking ID (Barcode only, max 25 characters)</label><input id="sc" inputmode="none" autocomplete="off" autocapitalize="characters" autofocus>
+ ${k==='F'?'<button class="s" id="sw" style="width:100%;margin-top:8px">⇄ Switch Seller / Courier</button>':''}<label>Scan Tracking ID (Barcode only, max 25 characters)</label><input id="sc" inputmode="none" autocomplete="off" autocapitalize="characters" spellcheck="false" autofocus>
  <div id="last" class="card" style="margin:8px 0 0"></div></div>
  <div class="row"><button class="g" id="hold">⏸ Hold (resume later)</button><button class="r" id="sub">Submit → Close</button></div><div class="card" style="margin-top:10px"><h3>Recent (✕ = remove)</h3><div id="rec"></div></div>`;
  const inp=$('#sc'),show=()=>{$('#cnt').textContent=m.list.size;$('#rec').innerHTML=[...m.list.values()].slice(-8).reverse().map(x=>`<div class="mu">${x.n}. ${esc(x.awb)} · ${esc(x.seller)}/${esc(x.channel)}/${esc(x.courier)} <a class="er" data-x="${esc(x.awb)}" style="padding:4px 8px">✕</a></div>`).join('')};show();
@@ -219,9 +219,9 @@ async function scanning(k){const m=k==='F'?cur:rcur,V=$('#v'),sn=k==='F'?'scans'
   Q.F=Q.F.filter(i=>i.awb!==a);Q.R=Q.R.filter(i=>i.awb!==a);qsave();if(!await drain())return;const sl_=(m.list.get(a)||{}).seller||'';await gs('delScan',sn,a,sl_);m.list.delete(a);if(k==='F'){const l=KN.get(a);if(l){const g=l.filter(e=>e[2]!==sl_);g.length?KN.set(a,g):KN.delete(a)}}else RT.delete(sl_+'|'+a);log('void '+sn,a+' @ '+m.id);show();fb()};
  let busy=false;
  let tm;const go=async()=>{clearTimeout(tm);const raw=inp.value.trim().toUpperCase().replace(/[\/\s]/g,'');if(!raw)return;if(busy){tm=setTimeout(go,200);return}inp.value='';busy=true;
-  try{if(raw.length>SCAN_MAX_LEN)throw new Error('Tracking ID exceeds 25 characters. Scan rejected.');if(!/^[A-Z0-9-]+$/.test(raw))throw new Error('Invalid Tracking ID format. Only letters, numbers and hyphen are allowed.');if(scanMode==='task'&&k==='F'){const taskRow=uploadedTask&&uploadedTask.find(x=>x.awb===raw);if(!taskRow)throw new Error('Tracking ID is not present in the uploaded task. Scan rejected.');if(taskRow.seller!==m.seller||taskRow.channel!==m.channel||taskRow.courier!==m.courier)throw new Error('This Tracking ID belongs to '+taskRow.seller+' / '+taskRow.channel+' / '+taskRow.courier+'. Switch to the correct task group.');if(taskScanned.has(raw))throw new Error('Tracking ID already scanned against the uploaded task.');}const accepted=await one(k,m,raw);if(accepted!==false){if(scanMode==='task'&&k==='F'){taskScanned.add(raw);try{localStorage.setItem('wms_task_scanned',JSON.stringify([...taskScanned]))}catch(e){}if(taskScanned.size>=uploadedTask.length){toast('All uploaded task Tracking IDs scanned.');} }show()}}catch(er){await dupe(raw,esc(er.message||er))}busy=false;fb()};
+  try{if(raw.length>SCAN_MAX_LEN)throw new Error('Tracking ID exceeds 25 characters. Scan rejected.');if(/[\x00-\x1F\x7F]/.test(raw))throw new Error('Invalid Tracking ID: control characters are not allowed.');if(scanMode==='task'&&k==='F'){const taskRow=uploadedTask&&uploadedTask.find(x=>x.awb===raw);if(!taskRow)throw new Error('Tracking ID is not present in the uploaded task. Scan rejected.');if(taskRow.seller!==m.seller||taskRow.channel!==m.channel||taskRow.courier!==m.courier)throw new Error('This Tracking ID belongs to '+taskRow.seller+' / '+taskRow.channel+' / '+taskRow.courier+'. Switch to the correct task group.');if(taskScanned.has(raw))throw new Error('Tracking ID already scanned against the uploaded task.');}const accepted=await one(k,m,raw);if(accepted!==false){if(scanMode==='task'&&k==='F'){taskScanned.add(raw);try{localStorage.setItem('wms_task_scanned',JSON.stringify([...taskScanned]))}catch(e){}if(taskScanned.size>=uploadedTask.length){toast('All uploaded task Tracking IDs scanned.');} }show()}}catch(er){await dupe(raw,esc(er.message||er))}busy=false;fb()};
  inp.onkeydown=e=>{if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();go()}};
- inp.oninput=()=>{const pos=inp.selectionStart,upper=inp.value.toUpperCase();if(inp.value!==upper){inp.value=upper;try{inp.setSelectionRange(pos,pos)}catch(e){}}clearTimeout(tm);if(inp.value.trim().length>SCAN_MAX_LEN){tm=setTimeout(go,AUTO_MS);return}if(inp.value.trim().length>=MINLEN)tm=setTimeout(go,AUTO_MS)};
+ inp.oninput=()=>{const pos=inp.selectionStart,upper=inp.value.toUpperCase();if(inp.value!==upper){inp.value=upper;try{inp.setSelectionRange(pos,pos)}catch(e){}}clearTimeout(tm);if(inp.value.trim().length>=MINLEN)tm=setTimeout(go,AUTO_MS)};
  const meta=()=>{const{list,...r}=m;return r};
  if($('#sw'))$('#sw').onclick=async()=>{const vp=modal(`<h3>Switch Seller / Courier</h3><p class="mu">Scans after switching go to a separate manifest and PDF.</p>${suggestField('sw_s','Seller')}${suggestField('sw_c','Channel')}${suggestField('sw_o','Courier')}<div class="row" style="margin-top:10px"><button class="g" data-v="no">Cancel</button><button data-v="ok">Switch</button></div>`);
   wireSuggest('sw_s',cfg.sellers);wireSuggest('sw_c',cfg.channels);wireSuggest('sw_o',cfg.couriers);const v=await vp;
