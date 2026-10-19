@@ -4,6 +4,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
+<script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
 <style>
 :root{--bg:#f1f5f9;--card:#fff;--tx:#0f172a;--mu:#64748b;--ac:#0e7490;--on:#fff;--bd:#e2e8f0;--ok:#15803d;--er:#b91c1c;--sb:#0b1f3a;--sbt:#cbd5e1;--sba:#12879f;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b1220;--card:#131c2e;--tx:#e8edf5;--mu:#94a3b8;--ac:#22b8cf;--on:#042a33;--bd:#243049;--ok:#4ade80;--er:#f87171;--sb:#060d1b;--sba:#0f766e}}
@@ -47,6 +48,7 @@ button,input,select{touch-action:manipulation}
 .cb{position:relative}.dd{position:absolute;left:0;right:0;top:100%;margin-top:2px;z-index:15;max-height:230px;overflow:auto;background:var(--card);border:2px solid var(--ac);border-radius:10px;display:none;box-shadow:0 8px 24px rgba(2,8,23,.25)}.dd div{padding:11px 12px;cursor:pointer;border-bottom:1px solid var(--bd)}.dd div:last-child{border:0}.dd div:hover,.dd div.hl{background:var(--bg);color:var(--ac)}
 #bar{position:fixed;top:0;left:0;height:3px;width:100%;background:linear-gradient(90deg,transparent,var(--ac),transparent);animation:bm 1s linear infinite;display:none;z-index:30}@keyframes bm{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
 #toast{position:fixed;top:64px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:9px 16px;border-radius:10px;z-index:20;display:none}
+#camBox{display:none;margin-top:10px}#camVideo{width:100%;max-height:320px;background:#000;border-radius:10px;object-fit:contain}#scanActions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}#scanActions button{flex:1;min-width:120px}
 </style></head><body>
 <div id="bar"></div><div id="toast"></div><div id="app"></div><div id="ovl"></div>
 <script>
@@ -182,30 +184,50 @@ async function scanning(k){const m=k==='F'?cur:rcur,V=$('#v'),sn=k==='F'?'scans'
  try{await init(k,m)}catch(e){toast('Load failed: '+(e.message||e));V.innerHTML='<div class="card er">Load failed. Please try again.</div>';return}
  V.innerHTML=`<div class="card"><div class="mu">${k==='F'?'OUTWARD DISPATCH':'CANCELLED'} MANIFEST</div><b>${esc(m.id)}</b><div class="mu">${esc(m.createdStr)}${k==='F'?' · '+esc(m.seller)+' / '+esc(m.channel)+' / '+esc(m.courier)+(SESS.length>1?' · session: '+SESS.length+' manifests':''):''}</div>
  <div class="big" id="cnt">0</div><div class="mu" style="text-align:center">scanned ${k==='F'?'/ '+MAX:''} · saved to Google Sheet</div><div class="mu" id="pend" style="text-align:center"></div>
- ${k==='F'?'<button class="s" id="sw" style="width:100%;margin-top:8px">⇄ Switch Seller / Courier</button>':''}<label>Scan AWB</label><input id="sc" inputmode="none" autocomplete="off" autocapitalize="characters" autofocus>
+ ${k==='F'?'<button class="s" id="sw" style="width:100%;margin-top:8px">⇄ Switch Seller / Courier</button>':''}<label>Scan AWB / QWB</label><input id="sc" inputmode="text" autocomplete="off" autocapitalize="characters" autofocus placeholder="Scan with HHD or type barcode">
+ <div id="scanActions"><button type="button" id="scanSubmit">✓ Submit Scan</button><button type="button" class="g" id="camStart">📷 Scan by Camera</button></div>
+ <div id="camBox"><video id="camVideo" muted playsinline></video><div class="row" style="margin-top:6px"><button type="button" class="r" id="camStop">Stop Camera</button><span id="camStatus" class="mu">Camera starting…</span></div></div>
  <div id="last" class="card" style="margin:8px 0 0"></div></div>
  <div class="row"><button class="g" id="hold">⏸ Hold (resume later)</button><button class="r" id="sub">Submit → Close</button></div><div class="card" style="margin-top:10px"><h3>Recent (✕ = remove)</h3><div id="rec"></div></div>`;
  const inp=$('#sc'),show=()=>{$('#cnt').textContent=m.list.size;$('#rec').innerHTML=[...m.list.values()].slice(-8).reverse().map(x=>`<div class="mu">${x.n}. ${esc(x.awb)} · ${esc(x.seller)}/${esc(x.channel)}/${esc(x.courier)} <a class="er" data-x="${esc(x.awb)}" style="padding:4px 8px">✕</a></div>`).join('')};show();
  const fb=()=>{if(!$('#ovl').innerHTML)inp.focus()};inp.onblur=()=>setTimeout(fb,80);
  $('#rec').onclick=async e=>{const a=e.target.dataset.x;if(!a)return;if(!await yn('Remove '+esc(a)+'?','Remove'))return fb();
   Q.F=Q.F.filter(i=>i.awb!==a);Q.R=Q.R.filter(i=>i.awb!==a);qsave();if(!await drain())return;const sl_=(m.list.get(a)||{}).seller||'';await gs('delScan',sn,a,sl_);m.list.delete(a);if(k==='F'){const l=KN.get(a);if(l){const g=l.filter(e=>e[2]!==sl_);g.length?KN.set(a,g):KN.delete(a)}}else RT.delete(sl_+'|'+a);log('void '+sn,a+' @ '+m.id);show();fb()};
- let busy=false;
+ let busy=false, cameraReader=null, cameraControls=null, cameraActive=false;
+ const stopCamera=()=>{cameraActive=false;try{if(cameraControls&&cameraControls.stop)cameraControls.stop()}catch(e){}cameraControls=null;try{const vv=$('#camVideo');if(vv){vv.pause();vv.srcObject=null}}catch(e){}if($('#camBox'))$('#camBox').style.display='none'};
  let tm;const go=async()=>{clearTimeout(tm);const awb=inp.value.trim().toUpperCase().replace(/[\/\s]/g,'');if(!awb)return;if(busy){tm=setTimeout(go,200);return}inp.value='';busy=true;
   try{await one(k,m,awb);show()}catch(er){await dupe(awb,'Save error: '+(er.message||er.code)+'. Please scan again.')}busy=false;fb()};
+ $('#scanSubmit').onclick=()=>{clearTimeout(tm);rej=false;go()};
+ $('#camStart').onclick=async()=>{
+   const box=$('#camBox'),video=$('#camVideo'),status=$('#camStatus');
+   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){toast('Camera not supported. Open this page over HTTPS and allow camera access.');return}
+   if(!window.ZXingBrowser||!window.ZXingBrowser.BrowserMultiFormatReader){toast('Camera scanner library did not load. Check internet connection.');return}
+   box.style.display='block';status.textContent='Requesting camera permission…';cameraActive=true;
+   try{
+     cameraReader=new ZXingBrowser.BrowserMultiFormatReader();
+     cameraControls=await cameraReader.decodeFromVideoDevice(undefined,video,(result,err)=>{
+       if(!cameraActive||!result)return;
+       const code=String(result.getText()||'').trim();if(!code)return;
+       status.textContent='Barcode detected';stopCamera();inp.value=code;go();
+     });
+     status.textContent='Point camera at the barcode';
+   }catch(e){stopCamera();toast('Camera error: '+(e.message||e)+' — allow camera access and use HTTPS.')}
+ };
+ $('#camStop').onclick=stopCamera;
  let rej=false,rejT;
  const finishRej=async()=>{clearTimeout(rejT);if(!rej)return;const n=inp.value.trim().length;inp.value='';rej=false;busy=true;await dupe(n+' characters',esc('Barcode has '+n+' characters. More than '+AWB_MAX+' characters is not accepted.'),'BARCODE TOO LONG');busy=false;fb()};
  inp.onkeydown=e=>{if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();if(rej)finishRej();else go()}};
  inp.oninput=()=>{clearTimeout(tm);
   if(rej||inp.value.trim().length>AWB_MAX){rej=true;clearTimeout(rejT);rejT=setTimeout(finishRej,350);return}   // too long: take the whole scan, throw it away, tell the user once
-  if(inp.value.trim().length>=MINLEN)tm=setTimeout(go,AUTO_MS)};
+  if(inp.value.trim().length>=3)tm=setTimeout(go,AUTO_MS)};
  const meta=()=>{const{list,...r}=m;return r};
  if($('#sw'))$('#sw').onclick=async()=>{let v=await modal(`<h3>Switch Seller / Courier</h3><p class="mu">Scans after switching go to a separate manifest and PDF.</p>${cbo('w1','Seller',cfg.sellers)}${cbo('w2','Channel',cfg.channels)}${cbo('w3','Courier',cfg.couriers)}<div class="row" style="margin-top:10px"><button class="g" data-v="no">Cancel</button><button data-v="ok">Switch</button></div>`);
   if(!v)return fb();v=[canon(cfg.sellers,v[0]),canon(cfg.channels,v[1]),canon(cfg.couriers,v[2])];if(!v[0]||!v[1]||!v[2]){toast('Please choose Seller, Channel and Courier from the list');return fb()}
   let t=SESS.find(x=>x.seller===v[0]&&x.channel===v[1]&&x.courier===v[2]);
   if(!t){t=(await col('manifests',[['user','==',me.id],['status','==','open']])).find(x=>x.seller===v[0]&&x.channel===v[1]&&x.courier===v[2])||await mkM('F',v[0],v[1],v[2]);SESS.push(t)}
   cur=t;scanning('F')};
- $('#hold').onclick=async()=>{const H=k==='F'?SESS:[m];H.forEach(x=>{x.count=x.list?x.list.size:x.count;HELD[x.id]=x});Q.M.push({c:cn.slice(0,-1),S:H.map(x=>mt(x)),E:[]});qsave();flush();if(k==='F'){cur=null;SESS=[]}else rcur=null;scanV(k)};
- $('#sub').onclick=async()=>{const A=k==='F'?SESS:[m],L=A.filter(x=>x.list&&x.list.size);if(!L.length)return toast('No AWB scanned yet');
+ $('#hold').onclick=async()=>{stopCamera();const H=k==='F'?SESS:[m];H.forEach(x=>{x.count=x.list?x.list.size:x.count;HELD[x.id]=x});Q.M.push({c:cn.slice(0,-1),S:H.map(x=>mt(x)),E:[]});qsave();flush();if(k==='F'){cur=null;SESS=[]}else rcur=null;scanV(k)};
+ $('#sub').onclick=async()=>{stopCamera();const A=k==='F'?SESS:[m],L=A.filter(x=>x.list&&x.list.size);if(!L.length)return toast('No AWB scanned yet');
   if(!await modal(`<h3>Close ${L.length>1?L.length+' manifests':'manifest'}?</h3><p>${L.map(x=>(x.seller?esc(x.seller)+' / '+esc(x.courier):'Cancelled')+': <b>'+x.list.size+'</b> AWB').join('<br>')}</p><p class="mu">A separate manifest &amp; PDF is created for each. Once closed it cannot be edited (only an admin can reopen it).</p><div class="row"><button class="g" data-v="no">Back</button><button data-v="ok">Close</button></div>`))return fb();
   const n=new Date(),R=[],S=[],E=[];for(const x of A){if(!x.list.size){E.push(x.id);continue}Object.assign(x,{status:'closed',count:x.list.size,closed:n.toISOString(),closedStr:ist(n)});S.push(mt(x));R.push({m:mt(x),arr:[...x.list.values()]})}
   Q.M.push({c:cn.slice(0,-1),S,E});qsave();S.forEach(x=>{CLOSED.add(x.id);delete HELD[x.id];log('close',x.id+' ('+x.count+')')});flush()
